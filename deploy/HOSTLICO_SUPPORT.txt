@@ -1,0 +1,19 @@
+# Hostlico support — Python App broken on LiteSpeed
+
+Account: summitst
+Domain / App: demo.summitstaffing.com.au
+Path: /home2/summitst/demo.summitstaffing.com.au
+
+Errors in stderr.log:
+
+1) /usr/local/lsws/fcgi-bin/lswsgi_wrapper: line 9: /bin/set_env_vars.py: No such file or directory
+2) /usr/local/lsws/fcgi-bin/lswsgi_wrapper: line 18: exec: : not found
+3) ModuleNotFoundError: No module named 'a2wsgi' (Passenger not using app virtualenv)
+4) RecursionError during import
+
+Please:
+- Repair/recreate the Setup Python App for this subdomain so LSWS has a valid Python binary path
+- Enable SSH/Terminal for this account so we can pip install into the app venv
+- Confirm virtualenv path under ~/virtualenv/demo.summitstaffing.com.au/
+
+Thank you.

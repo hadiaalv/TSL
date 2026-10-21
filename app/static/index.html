@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Social Links · Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261026-pages" />
+  <link rel="icon" type="image/png" href="/public/logo.png" />
+  <link rel="apple-touch-icon" href="/public/logo.png" />
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-mark" id="company-mark">
+          <img src="/public/logo.png" alt="The Social Links logo" onload="this.parentNode.classList.add('has-logo')" onerror="this.remove()" />
+          <span class="brand-mark-text">TSL</span>
+        </span>
+        <div>
+          <div class="brand-name">The Social Links</div>
+          <div class="brand-sub">Team workspace</div>
+        </div>
+      </div>
+      <div class="account-card">
+        <div class="account-meta">
+          <span class="account-label">Signed in</span>
+          <strong id="session-user">…</strong>
+        </div>
+        <div class="account-actions">
+          <a href="/admin" id="admin-link" class="admin-link hidden">Admin</a>
+          <button id="btn-logout" class="btn-logout" type="button">Log out</button>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="Workspace navigation">
+        <a href="#home" data-route="home" class="sidebar-nav-link"><span aria-hidden="true">⌂</span><span>Home</span></a>
+        <a href="#brands" data-route="brands" class="sidebar-nav-link"><span aria-hidden="true">▦</span><span>Brands</span></a>
+        <a href="#work" data-route="work" class="sidebar-nav-link"><span aria-hidden="true">✓</span><span>Open Work</span><em id="open-work-count" class="count-badge">0</em></a>
+        <a href="#calendar" data-route="calendar" class="sidebar-nav-link"><span aria-hidden="true">▣</span><span>Calendar</span></a>
+        <a href="#ai" data-route="ai" class="sidebar-nav-link"><span aria-hidden="true">✦</span><span>AI Assistant</span></a>
+        <a href="#chat" data-route="chat" class="sidebar-nav-link"><span aria-hidden="true">💬</span><span>Team Chat</span></a>
+        <a href="#approvals" data-route="approvals" class="sidebar-nav-link"><span aria-hidden="true">☑</span><span>Approvals</span></a>
+        <a href="#integrations" data-route="integrations" class="sidebar-nav-link"><span aria-hidden="true">⚙</span><span>Integrations</span></a>
+      </nav>
+
+      <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true">‹</button>
+    </aside>
+
+    <main class="main">
+      <header class="top">
+        <div class="top-heading">
+          <div class="page-title">
+            <button id="mobile-sidebar-toggle" class="mobile-sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
+            <div>
+              <p class="eyebrow">The Social Links</p>
+              <h1 id="page-title">Home</h1>
+            </div>
+          </div>
+          <div class="global-search">
+            <input id="global-search" type="search" placeholder="Search brands, tasks, events…  ( / )" autocomplete="off" aria-label="Search everything" />
+            <div id="global-search-results" class="global-search-results hidden"></div>
+          </div>
+          <div class="notification-wrap">
+            <button id="notification-toggle" class="notification-toggle" type="button" aria-label="Notifications" aria-expanded="false">
+              <span aria-hidden="true">♧</span>
+              <span>Notifications</span>
+              <span id="notification-badge" class="notification-badge hidden" aria-label="Unread notifications">0</span>
+            </button>
+            <section id="notification-panel" class="notification-panel hidden" aria-label="Notification center">
+              <div class="notification-heading">
+                <h2>Notifications</h2>
+                <label class="sound-setting"><input id="notification-sound" type="checkbox" /> Sound</label>
+              </div>
+              <div id="notification-list"></div>
+            </section>
+          </div>
+        </div>
+      </header>
+
+      <section id="home-view" class="page-view">
+        <section class="dashboard-panel summary-panel">
+          <div class="section-heading"><div><span class="eyebrow">At a glance</span><h2>Overview</h2></div><a href="#work" class="text-link">View all work</a></div>
+          <div id="work-summary" class="work-summary"><p class="muted">Loading work…</p></div>
+        </section>
+        <section id="pending-section" class="brand-section" hidden>
+          <div class="section-heading"><div><span class="eyebrow">Needs attention</span><h2>Brands with open tasks</h2></div></div>
+          <div id="pending-brands" class="brand-grid" aria-live="polite"></div>
+        </section>
+        <section id="recent-section" class="brand-section">
+          <div class="section-heading"><div><span class="eyebrow">Pick up where you left off</span><h2>Recent</h2></div><a href="#brands" class="text-link">All brands</a></div>
+          <div id="recent-brands" class="brand-grid" aria-live="polite"></div>
+        </section>
+        <div class="dashboard-widgets">
+          <section class="dashboard-panel activity-panel">
+            <div class="section-heading"><div><span class="eyebrow">Latest updates</span><h2>Recent Activity</h2></div></div>
+            <div id="recent-activity" class="activity-list"><p class="muted">Loading activity…</p></div>
+          </section>
+          <section class="dashboard-panel quick-actions-panel">
+            <div class="section-heading"><div><span class="eyebrow">Shortcuts</span><h2>Quick Actions</h2></div></div>
+            <div class="quick-actions">
+              <button type="button" id="quick-add-brand">＋ Add brand</button>
+              <button type="button" id="quick-add-task">＋ Add task</button>
+              <button type="button" id="quick-schedule-event">＋ Schedule event</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="brands-view" class="page-view hidden">
+        <div class="section-heading">
+          <div><span class="eyebrow">Your portfolio</span><h2>All Brands</h2></div>
+          <div class="widget-actions">
+            <button id="btn-import-biz" class="ghost" type="button">Import brands</button>
+            <button id="btn-create-board" class="primary-action" type="button">+ Add brand</button>
+          </div>
+        </div>
+        <label class="brand-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="brand-search" type="search" placeholder="Filter brands by name" autocomplete="off" />
+        </label>
+        <div id="all-brands" class="brand-grid" aria-live="polite"></div>
+      </section>
+
+      <section id="calendar-view" class="page-view hidden">
+        <section id="upcoming-events" class="dashboard-panel">
+            <div class="section-heading">
+              <div><span class="eyebrow">Plan ahead</span><h2>Upcoming Events</h2></div>
+              <div class="widget-actions">
+                <button class="text-link" type="button" id="calendar-open">Refresh</button>
+                <button class="text-link" type="button" id="schedule-event">+ Schedule</button>
+              </div>
+            </div>
+            <div id="upcoming-events-list" class="events-list" aria-live="polite">
+              <p class="muted">Loading events…</p>
+            </div>
+          </section>
+      </section>
+
+      <section id="ai-view" class="page-view hidden">
+        <div class="ai-page">
+        <section id="assistant-chat">
+            <div class="assistant-heading">
+              <div><span class="eyebrow">Portfolio assistant</span><h2>What needs attention?</h2></div>
+            </div>
+            <p class="lede">Ask across your portfolio. Email is one input — not the product.</p>
+            <div class="quick">
+              <button type="button" data-q="What needs my attention right now? What's overdue and what's waiting on someone else?">Attention brief</button>
+              <button type="button" data-q="List open decisions I need to make, by business.">Decisions</button>
+              <button type="button" data-q="What follow-ups are due today or overdue?">Follow-ups</button>
+              <button type="button" data-q="Show me waiting-on and delegated items across the portfolio.">Waiting / delegated</button>
+            </div>
+            <div id="brief-stats" class="stats"></div>
+            <div id="chat" class="chat" aria-live="polite"></div>
+            <form id="composer" class="composer">
+              <textarea id="input" rows="2" placeholder="Ask about your brands, tasks, and priorities…"></textarea>
+              <button type="submit" id="send">Send</button>
+            </form>
+            <div id="status" class="status muted"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="approvals-view" class="page-view hidden">
+        <div class="section-heading"><div><span class="eyebrow">Needs your decision</span><h2>Approvals</h2></div></div>
+        <div id="approvals" class="approvals"></div>
+      </section>
+
+      <section id="integrations-view" class="page-view hidden">
+        <div class="section-heading"><div><span class="eyebrow">Connected services</span><h2>Integrations</h2></div></div>
+        <section class="google-panel">
+          <div id="google-account-card" class="google-account-card">
+          <div class="g-card-top">
+            <div id="google-conn-badge" class="g-badge off">Not connected</div>
+          </div>
+          <div class="g-account-label">Connected account</div>
+          <div id="google-email" class="google-email muted">No Google account linked</div>
+          <div class="pull-status">
+            <div class="pull-heading">API sync</div>
+            <div class="pull-line">
+              <span>Gmail</span>
+              <strong id="pull-email-status" class="pull-never">Not pulled yet</strong>
+            </div>
+            <div class="pull-line">
+              <span>Calendar</span>
+              <strong id="pull-cal-status" class="pull-never">Not pulled yet</strong>
+            </div>
+            <div class="pull-line">
+              <span>Google Drive</span>
+              <strong id="drive-access-status">Not pulled yet</strong>
+            </div>
+          </div>
+          </div>
+          <a href="/api/google/auth" id="google-link" class="btn-connect">Connect Google account</a>
+          <p class="muted google-status">Drive uses this same Google account. Reconnect and approve Drive access if prompted. Brand sync adds a clickable Drive link for every file in the matching folder without downloading its contents. Configure explicit folder IDs when names are missing or duplicated.</p>
+          <div class="pull-row">
+            <button id="btn-emails" class="ghost pull-btn" type="button">Pull email</button>
+            <button id="btn-cal" class="ghost pull-btn" type="button">Pull calendar</button>
+            <button id="btn-drive" class="ghost pull-btn" type="button">Pull Drive</button>
+          </div>
+          <button id="btn-drive-import" class="ghost pull-btn" type="button">Load Drive links into brands</button>
+          <button id="btn-google-disconnect" class="ghost btn-disconnect hidden" type="button">Disconnect Google</button>
+          <div id="google-status" class="muted google-status"></div>
+        </section>
+      </section>
+
+      <section id="work-view" class="page-view hidden">
+        <div class="section-heading work-page-heading">
+          <div><span class="eyebrow">Across all brands</span><h2>Open Work</h2><p class="muted">In progress and pending items.</p></div>
+          <button class="primary-action" type="button" id="work-add-task">+ Add task</button>
+        </div>
+        <div id="work-list" class="work-list" aria-live="polite"><p class="muted">Loading work…</p></div>
+      </section>
+
+      <section id="chat-view" class="page-view hidden">
+        <div class="section-heading">
+          <div><span class="eyebrow">Powered by Slack</span><h2>Team Chat</h2><p class="muted">Chat with your team without leaving this workspace.</p></div>
+          <button class="ghost hidden" type="button" id="slack-disconnect">Disconnect Slack</button>
+        </div>
+        <div id="slack-connect" class="slack-connect hidden"></div>
+        <div id="slack-app" class="slack-app hidden">
+          <aside class="slack-sidebar">
+            <div class="slack-team"><strong id="slack-team">Slack</strong></div>
+            <input id="slack-filter" type="search" placeholder="Search channels &amp; people" aria-label="Filter conversations" />
+            <div id="slack-conversations" class="slack-conversations"></div>
+          </aside>
+          <section class="slack-thread">
+            <header id="slack-thread-title" class="slack-thread-title">Select a conversation</header>
+            <div id="slack-messages" class="slack-messages" aria-live="polite"></div>
+            <form id="slack-form" class="slack-form">
+              <button type="button" class="slack-tool" data-attach="main" title="Attach a file" aria-label="Attach a file">📎</button>
+              <button type="button" class="slack-tool" data-emoji="main" title="Add emoji" aria-label="Add emoji">😊</button>
+              <input id="slack-input" placeholder="Message…" autocomplete="off" maxlength="4000" aria-label="Message" disabled />
+              <button type="submit" disabled>Send</button>
+            </form>
+          </section>
+          <aside id="slack-thread-panel" class="slack-thread-panel hidden">
+            <header class="slack-thread-title"><span>Thread</span><button type="button" id="slack-thread-close" class="slack-thread-close" aria-label="Close thread">✕</button></header>
+            <div id="slack-thread-messages" class="slack-messages"></div>
+            <form id="slack-thread-form" class="slack-form">
+              <button type="button" class="slack-tool" data-attach="thread" title="Attach a file" aria-label="Attach a file">📎</button>
+              <button type="button" class="slack-tool" data-emoji="thread" title="Add emoji" aria-label="Add emoji">😊</button>
+              <input id="slack-thread-input" placeholder="Reply…" autocomplete="off" maxlength="4000" aria-label="Reply" />
+              <button type="submit">Send</button>
+            </form>
+          </aside>
+        </div>
+      </section>
+
+  <section id="board-modal" class="page-view brand-page hidden">
+    <section class="modal-card board-workspace">
+      <header class="board-workspace-heading">
+        <div class="brand-heading">
+          <div id="board-brand-logo" class="brand-logo-header" aria-hidden="true"></div>
+          <div><span class="eyebrow">Brand workspace</span><h2 id="board-title"></h2><p id="board-description" class="muted"></p>
+          <button id="edit-board-details" class="text-link" type="button">Edit details &amp; add logo</button>
+          </div>
+        </div>
+        <button id="board-close" class="ghost" type="button">← All brands</button>
+      </header>
+      <form id="board-edit-form" class="board-edit-form hidden">
+        <input id="board-edit-name" aria-label="Board title" maxlength="160" required />
+        <input id="board-edit-description" aria-label="Board description" maxlength="2000" />
+        <label class="logo-upload-field">Replace logo <input id="board-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /></label>
+        <button type="button" id="remove-brand-logo" class="ghost">Remove logo</button>
+        <button type="submit">Save details</button>
+      </form>
+      <section class="brand-links-panel">
+        <div class="section-heading"><div><span class="eyebrow">Find it fast</span><h3>Links</h3></div></div>
+        <div id="brand-links-list" class="brand-links-list"><p class="muted">No links yet.</p></div>
+        <form id="brand-link-form" class="brand-link-form">
+          <select id="brand-link-kind" aria-label="Link type">
+            <option value="website">Website</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option>
+            <option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="linkedin">LinkedIn</option>
+            <option value="x">X / Twitter</option><option value="shop">Online shop</option><option value="drive">Drive folder</option><option value="other">Other</option>
+          </select>
+          <input id="brand-link-url" type="text" placeholder="Paste link (e.g. instagram.com/brand)" aria-label="Link URL" required />
+          <input id="brand-link-label" placeholder="Label (optional)" maxlength="80" aria-label="Link label" />
+          <button type="submit">Add link</button>
+        </form>
+      </section>
+      <form id="board-task-form" class="board-task-form">
+        <input id="board-task-title" aria-label="Task title" placeholder="Add a card to this board…" maxlength="180" required />
+        <select id="board-task-owner" aria-label="Assign to team member"></select>
+        <input id="board-task-due" aria-label="Due date" type="date" />
+        <select id="board-task-category" aria-label="Task label">
+          <option value="other">Other</option><option value="npd">NPD</option><option value="new_line_form">New line form</option>
+          <option value="supplier">Supplier</option><option value="client">Client</option><option value="retailer_outreach">Retailer</option>
+          <option value="distributor_outreach">Distributor</option><option value="follow_up">Follow-up</option>
+          <option value="meeting_action">Meeting</option><option value="decision">Decision</option><option value="opportunity">Opportunity</option>
+        </select>
+        <button type="submit">Add card</button>
+      </form>
+      <section class="brand-events-panel">
+        <div class="section-heading"><div><span class="eyebrow">Schedule</span><h3>Upcoming Events</h3></div><button type="button" id="brand-schedule-event" class="text-link">+ Schedule</button></div>
+        <div id="brand-events-list" class="events-list"><p class="muted">Loading events…</p></div>
+      </section>
+      <div id="board-columns" class="board-columns"></div>
+      <div id="board-status" class="muted" role="status"></div>
+    </section>
+  </section>
+
+      <div id="mobile-sidebar-scrim" class="mobile-sidebar-scrim"></div>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden" role="dialog">
+    <div class="modal-card">
+      <h3>Add a brand</h3>
+      <label>Brand name <input id="biz-name" maxlength="160" required /></label>
+      <label>Description <input id="biz-desc" /></label>
+      <label>Workspace context <textarea id="biz-ctx" rows="4"></textarea></label>
+      <label class="logo-upload-field">Upload logo <input id="biz-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /></label>
+      <div id="biz-logo-preview" class="logo-preview"><span class="muted">No logo selected</span></div>
+      <p class="muted logo-help">Square PNG, SVG, JPEG, or WebP; max 4 MB. 256 × 256 px or larger recommended.</p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Cancel</button>
+        <button type="button" id="modal-save">Add brand</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="event-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="event-modal-title">
+    <form id="event-form" class="modal-card">
+      <h3 id="event-modal-title">Schedule an event</h3>
+      <label>Event title <input id="event-title" maxlength="180" required placeholder="Campaign launch, shoot, meeting…" /></label>
+      <label>Brand <select id="event-brand" required></select></label>
+      <label>Type
+        <select id="event-type">
+          <option value="event">Event</option><option value="scheduled_post">Scheduled post</option>
+          <option value="shoot">Shoot</option><option value="meeting">Meeting</option>
+          <option value="deadline">Deadline</option><option value="campaign_launch">Campaign launch</option>
+        </select>
+      </label>
+      <label>Date and time <input id="event-start" type="datetime-local" required /></label>
+      <label>Notes <textarea id="event-notes" rows="3" maxlength="2000"></textarea></label>
+      <p id="event-form-error" class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="event-cancel">Cancel</button>
+        <button type="submit" id="event-save">Schedule event</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="quick-task-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="quick-task-title">
+    <form id="quick-task-form" class="modal-card">
+      <h3 id="quick-task-title">Add a task</h3>
+      <label>Task title <input id="quick-task-name" maxlength="180" required /></label>
+      <label>Brand <select id="quick-task-brand" required></select></label>
+      <label>Due date <input id="quick-task-due" type="date" /></label>
+      <p id="quick-task-error" class="form-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="quick-task-cancel">Cancel</button>
+        <button type="submit" id="quick-task-save">Add task</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="import-modal" class="modal hidden" role="dialog">
+    <div class="modal-card modal-card-wide">
+      <h3>Import brand briefs</h3>
+      <p class="muted import-hint">
+        Paste the multi-brand pack (each brand under a <code># Brand name</code> heading),
+        or separate files joined together. Each heading becomes its own business / bot context.
+      </p>
+      <label>Brand pack markdown
+        <textarea id="import-md" rows="12" placeholder="# Brand A&#10;Brief for brand A…&#10;&#10;# Brand B&#10;Brief for brand B…"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="import-cancel">Cancel</button>
+        <button type="button" id="import-save">Import brands</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="business-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="business-title">
+    <section class="modal-card modal-card-wide business-card">
+      <div class="business-heading">
+        <div>
+          <h3 id="business-title"></h3>
+          <div id="business-status" class="muted business-status"></div>
+        </div>
+        <button id="business-close" class="ghost" type="button" aria-label="Close business profile">Close</button>
+      </div>
+      <p id="business-description" class="business-description"></p>
+      <section class="business-drive">
+        <h4>Google Drive sources</h4>
+        <p id="business-drive-status" class="muted"></p>
+        <ul id="business-drive-sources"></ul>
+      </section>
+      <pre id="business-context" class="business-context"></pre>
+    </section>
+  </div>
+
+  <input id="slack-file-input" type="file" hidden />
+  <div id="emoji-picker" class="emoji-picker hidden" role="dialog" aria-label="Emoji picker"></div>
+  <script src="/static/emoji.js?v=20261025-emoji"></script>
+  <script src="/static/app.js?v=20261025-emoji"></script>
+</body>
+</html>

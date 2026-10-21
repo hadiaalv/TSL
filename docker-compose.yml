@@ -1,0 +1,21 @@
+services:
+  cos:
+    build: .
+    container_name: ai-chief-of-staff
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      APP_HOST: "0.0.0.0"
+      APP_PORT: "8000"
+      DATA_DIR: "/app/data"
+    volumes:
+      - cos_data:/app/data
+    # Uncomment if you terminate TLS on this host and set PUBLIC_BASE_URL=https://...
+    # environment also in .env:
+    # AUTH_COOKIE_SECURE=true
+
+volumes:
+  cos_data:

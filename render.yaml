@@ -1,0 +1,77 @@
+# Render Blueprint — https://render.com
+# Dashboard → New → Blueprint → connect this repo
+#
+# Note: persistent disk usually needs a paid web plan.
+# Free tier works for demo; SQLite may reset on redeploy.
+
+services:
+  - type: web
+    name: ai-chief-of-staff
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATA_DIR
+        value: /app/data
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: SEED_DEMO
+        value: "false"
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: AUTH_SESSION_HOURS
+        value: "168"
+      - key: GEMINI_MODEL
+        value: gemini-3.8-flash
+      - key: GEMINI_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai/
+      # Set these in the Render dashboard (Do not commit secrets)
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: GOOGLE_DRIVE_PORTFOLIO_FOLDER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_ALLOWED_PHONE
+        sync: false
+      - key: WHATSAPP_USERNAME
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        value: v22.0
+      - key: WHATSAPP_PROVIDER
+        value: 360dialog
+      - key: D360_API_KEY
+        sync: false
+      - key: D360_API_BASE_URL
+        value: https://waba-sandbox.360dialog.io/v1
+      - key: D360_WEBHOOK_AUTH
+        value: token
+      - key: D360_WEBHOOK_TOKEN
+        sync: false
+      - key: D360_WEBHOOK_USERNAME
+        sync: false
+      - key: D360_WEBHOOK_PASSWORD
+        sync: false

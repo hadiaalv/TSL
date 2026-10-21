@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin · The Social Links</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261015-light-theme" />
+  <link rel="stylesheet" href="/static/admin.css?v=20261015-light-theme" />
+  <link rel="icon" type="image/png" href="/public/logo.png" />
+  <link rel="apple-touch-icon" href="/public/logo.png" />
+</head>
+<body class="admin-body">
+  <div class="admin-shell">
+    <aside class="admin-rail">
+      <div class="admin-brand">
+        <span class="brand-mark">TSL</span>
+        <div>
+          <div class="brand-name">The Social Links</div>
+          <div class="brand-sub">Workspace administration</div>
+        </div>
+      </div>
+
+      <nav class="admin-nav" aria-label="Admin sections">
+        <button type="button" class="nav-item active" data-view="overview">Overview</button>
+        <button type="button" class="nav-item" data-view="users">Users</button>
+        <button type="button" class="nav-item" data-view="businesses">Businesses</button>
+        <button type="button" class="nav-item" data-view="work">Open work</button>
+        <button type="button" class="nav-item" data-view="approvals">Approvals</button>
+        <button type="button" class="nav-item" data-view="google">Google sync</button>
+      </nav>
+
+      <div class="admin-rail-foot">
+        <a class="rail-link" href="/">← Back to TSL</a>
+      </div>
+    </aside>
+
+    <div class="admin-stage">
+      <header class="admin-header">
+        <div>
+          <p class="eyebrow" id="view-eyebrow">Control room</p>
+          <h1 id="view-title">Overview</h1>
+        </div>
+        <div class="admin-who">
+          <div class="who-meta">
+            <span class="who-label">Signed in</span>
+            <strong id="admin-user">…</strong>
+          </div>
+          <button type="button" class="btn-logout" id="admin-logout">Log out</button>
+        </div>
+      </header>
+
+      <main class="admin-main">
+        <!-- Overview -->
+        <section id="view-overview" class="view active">
+          <div class="stat-grid" id="stat-grid"></div>
+          <div class="split-2">
+            <article class="panel admin-panel">
+              <h2>Needs attention</h2>
+              <div id="attention-lists" class="stack-lists"></div>
+            </article>
+            <article class="panel admin-panel">
+              <h2>By business</h2>
+              <div id="by-business" class="biz-bars"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Users -->
+        <section id="view-users" class="view">
+          <div class="split-users">
+            <article class="panel admin-panel">
+              <h2>Create user</h2>
+              <form id="create-form" class="create-grid">
+                <label>Username <input id="c-username" required autocomplete="off" /></label>
+                <label>Display name <input id="c-display" autocomplete="off" /></label>
+                <label class="pw-field">
+                  Password
+                  <div class="pw-wrap">
+                    <input id="c-password" type="password" required minlength="8" autocomplete="new-password" />
+                    <button type="button" class="pw-toggle" data-target="c-password" aria-label="Show password">Show</button>
+                  </div>
+                </label>
+                <label class="pw-field">
+                  Repeat password
+                  <div class="pw-wrap">
+                    <input id="c-password2" type="password" required minlength="8" autocomplete="new-password" />
+                    <button type="button" class="pw-toggle" data-target="c-password2" aria-label="Show password">Show</button>
+                  </div>
+                </label>
+                <label>Role
+                  <select id="c-role">
+                    <option value="operator">operator</option>
+                    <option value="admin">admin</option>
+                    <option value="super_admin">super_admin</option>
+                  </select>
+                </label>
+                <button type="submit" id="c-save">Create user</button>
+              </form>
+              <p id="create-msg" class="form-msg"></p>
+            </article>
+
+            <article class="panel admin-panel grow">
+              <div class="panel-head">
+                <h2>Users</h2>
+                <span class="muted" id="users-count"></span>
+              </div>
+              <div id="users-table" class="users-table"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- Businesses -->
+        <section id="view-businesses" class="view">
+          <article class="panel admin-panel">
+            <div class="panel-head">
+              <h2>Businesses</h2>
+              <a class="text-link" href="/">Manage in TSL →</a>
+            </div>
+            <div id="biz-table" class="data-table"></div>
+          </article>
+        </section>
+
+        <!-- Work -->
+        <section id="view-work" class="view">
+          <article class="panel admin-panel">
+            <div class="panel-head">
+              <h2>Open work</h2>
+              <span class="muted" id="tasks-count"></span>
+            </div>
+            <div id="tasks-table" class="data-table"></div>
+          </article>
+        </section>
+
+        <!-- Approvals -->
+        <section id="view-approvals" class="view">
+          <article class="panel admin-panel">
+            <div class="panel-head">
+              <h2>Pending approvals</h2>
+              <span class="muted" id="approvals-count"></span>
+            </div>
+            <div id="approvals-table" class="data-table"></div>
+          </article>
+        </section>
+
+        <!-- Google -->
+        <section id="view-google" class="view">
+          <article class="panel admin-panel">
+            <div class="panel-head">
+              <h2>Google connections</h2>
+              <span class="muted">Per-user Gmail / Calendar sync</span>
+            </div>
+            <div id="google-table" class="data-table"></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>
