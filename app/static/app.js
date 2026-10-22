@@ -203,12 +203,92 @@ function renderWorkSummary(brief) {
   `;
 }
 
+function mdInline(raw) {
+  const codes = [];
+  let t = esc(raw).replace(/`([^`\n]+)`/g, (_, c) => `\u0000${codes.push(c) - 1}\u0000`);
+  t = t
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/\*\*\*([^*\n]+)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
+    .replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?!\*)/g, "$1<em>$2</em>")
+    .replace(/(^|[^_\w])_([^_\s][^_\n]*?)_(?![_\w])/g, "$1<em>$2</em>")
+    .replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[Number(i)]}</code>`);
+}
+
+function renderMarkdown(text) {
+  const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  const listStack = [];
+  const closeLists = (to = 0) => {
+    while (listStack.length > to) out.push(`</${listStack.pop().tag}>`);
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      closeLists();
+      const code = [];
+      i += 1;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+      i += 1;
+      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || "")) {
+      closeLists();
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const head = cells(line);
+      i += 2;
+      const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+      out.push(`<table class="md-table"><thead><tr>${head.map((c) => `<th>${mdInline(c)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      continue;
+    }
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
+    const rule = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line);
+    const item = line.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (heading) {
+      closeLists();
+      const level = Math.min(heading[1].length + 1, 6);
+      out.push(`<h${level} class="md-h">${mdInline(heading[2])}</h${level}>`);
+    } else if (rule) {
+      closeLists();
+      out.push("<hr />");
+    } else if (item) {
+      const depth = Math.floor(item[1].replace(/\t/g, "  ").length / 2);
+      const tag = /\d/.test(item[2]) ? "ol" : "ul";
+      while (listStack.length > depth + 1) out.push(`</${listStack.pop().tag}>`);
+      if (listStack.length === depth + 1 && listStack[depth].tag !== tag) out.push(`</${listStack.pop().tag}>`);
+      while (listStack.length < depth + 1) {
+        out.push(`<${tag}>`);
+        listStack.push({ tag });
+      }
+      out.push(`<li>${mdInline(item[3])}</li>`);
+    } else if (quote) {
+      closeLists();
+      out.push(`<blockquote>${mdInline(quote[1])}</blockquote>`);
+    } else if (!line.trim()) {
+      closeLists();
+    } else {
+      closeLists();
+      out.push(`<p>${mdInline(line)}</p>`);
+    }
+    i += 1;
+  }
+  closeLists();
+  return out.join("");
+}
+
 function addBubble(role, text, tools) {
   const chatEl = $("#chat");
   if (!chatEl) return;
   const div = document.createElement("div");
   div.className = `bubble ${role}`;
-  div.innerHTML = esc(text);
+  if (role === "assistant") div.classList.add("md");
+  div.innerHTML = role === "assistant" ? renderMarkdown(text) : esc(text);
   if (tools?.length) {
     const t = document.createElement("div");
     t.className = "tools";
@@ -374,12 +454,22 @@ async function refreshBusinesses() {
 }
 
 function renderTaskCard(task) {
-  return `<article class="card ${esc(task.status)}" data-task-id="${esc(task.id)}">
+  const status = String(task.status || "").toLowerCase();
+  const statusLabel = status.replace(/[_-]/g, " ");
+  const priority = String(task.priority || "").toUpperCase();
+  const due = task.deadline ? String(task.deadline).slice(0, 10) : "";
+  const overdue = due && due < new Date().toISOString().slice(0, 10);
+  const owner = task.owner_username || task.owner || "";
+  return `<article class="card task-card ${esc(status)}${overdue ? " is-overdue" : ""}" data-task-id="${esc(task.id)}">
+      <div class="task-card-top">
+        <span class="task-brand">${esc(task.business_name)}</span>
+        ${priority ? `<span class="task-priority ${esc(priority.toLowerCase())}">${esc(priority)}</span>` : ""}
+      </div>
       <div class="title">${esc(task.title)}</div>
       <div class="meta">
-        <span class="pill">${esc(task.business_name)}</span>
-        <span class="pill">${esc(task.status)}</span>
-        ${task.deadline ? `<span class="pill">due ${esc(task.deadline.slice(0, 10))}</span>` : ""}
+        <span class="task-status ${esc(status)}">${esc(statusLabel)}</span>
+        ${due ? `<span class="task-due${overdue ? " overdue" : ""}">${overdue ? "Overdue · " : "Due "}${esc(due)}</span>` : ""}
+        ${owner ? `<span class="task-owner">@${esc(owner)}</span>` : ""}
       </div>
       <button type="button" class="task-done-btn" data-mark-done="${esc(task.id)}">✓ Mark done</button>
     </article>`;
@@ -556,9 +646,10 @@ function renderBoardTask(task) {
 }
 
 function taskColumn(title, value) {
+  const items = boardTasks.filter((task) => task.business_id === activeBoard.id && boardStatus(task.status) === value);
   return `<section class="board-column" data-drop-status="${value}">
-    <h3>${title}<span>${boardTasks.filter((task) => task.business_id === activeBoard.id && boardStatus(task.status) === value).length}</span></h3>
-    ${boardTasks.filter((task) => task.business_id === activeBoard.id && boardStatus(task.status) === value).map(renderBoardTask).join("")}
+    <h3><span class="column-title">${title}</span><span class="column-count">${items.length}</span></h3>
+    ${items.length ? items.map(renderBoardTask).join("") : `<p class="column-empty">Drop cards here</p>`}
   </section>`;
 }
 
@@ -1713,7 +1804,7 @@ function selectSlackConversation(id, name) {
   $("#slack-thread-title").textContent = name;
   $("#slack-input").disabled = false;
   $("#slack-input").placeholder = `Message ${conv?.kind === "channel" ? "#" + name.replace(/^#/, "") : name}`;
-  $("#slack-form button").disabled = false;
+  $("#slack-form button[type=submit]").disabled = false;
   $("#slack-messages").innerHTML = `<p class="muted slack-empty">Loading…</p>`;
   renderSlackConversations();
   loadSlackMessages({ scroll: true });

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261026-pages" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261025-board" />
   <link rel="icon" type="image/png" href="/public/logo.png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
 </head>
@@ -267,6 +267,20 @@
         <button type="button" id="remove-brand-logo" class="ghost">Remove logo</button>
         <button type="submit">Save details</button>
       </form>
+      <form id="board-task-form" class="board-task-form">
+        <input id="board-task-title" aria-label="Task title" placeholder="Add a card to this board…" maxlength="180" required />
+        <select id="board-task-owner" aria-label="Assign to team member"></select>
+        <input id="board-task-due" aria-label="Due date" type="date" />
+        <select id="board-task-category" aria-label="Task label">
+          <option value="other">Other</option><option value="npd">NPD</option><option value="new_line_form">New line form</option>
+          <option value="supplier">Supplier</option><option value="client">Client</option><option value="retailer_outreach">Retailer</option>
+          <option value="distributor_outreach">Distributor</option><option value="follow_up">Follow-up</option>
+          <option value="meeting_action">Meeting</option><option value="decision">Decision</option><option value="opportunity">Opportunity</option>
+        </select>
+        <button type="submit">Add card</button>
+      </form>
+      <div id="board-columns" class="board-columns"></div>
+      <div class="brand-side-panels">
       <section class="brand-links-panel">
         <div class="section-heading"><div><span class="eyebrow">Find it fast</span><h3>Links</h3></div></div>
         <div id="brand-links-list" class="brand-links-list"><p class="muted">No links yet.</p></div>
@@ -281,23 +295,11 @@
           <button type="submit">Add link</button>
         </form>
       </section>
-      <form id="board-task-form" class="board-task-form">
-        <input id="board-task-title" aria-label="Task title" placeholder="Add a card to this board…" maxlength="180" required />
-        <select id="board-task-owner" aria-label="Assign to team member"></select>
-        <input id="board-task-due" aria-label="Due date" type="date" />
-        <select id="board-task-category" aria-label="Task label">
-          <option value="other">Other</option><option value="npd">NPD</option><option value="new_line_form">New line form</option>
-          <option value="supplier">Supplier</option><option value="client">Client</option><option value="retailer_outreach">Retailer</option>
-          <option value="distributor_outreach">Distributor</option><option value="follow_up">Follow-up</option>
-          <option value="meeting_action">Meeting</option><option value="decision">Decision</option><option value="opportunity">Opportunity</option>
-        </select>
-        <button type="submit">Add card</button>
-      </form>
       <section class="brand-events-panel">
         <div class="section-heading"><div><span class="eyebrow">Schedule</span><h3>Upcoming Events</h3></div><button type="button" id="brand-schedule-event" class="text-link">+ Schedule</button></div>
         <div id="brand-events-list" class="events-list"><p class="muted">Loading events…</p></div>
       </section>
-      <div id="board-columns" class="board-columns"></div>
+      </div>
       <div id="board-status" class="muted" role="status"></div>
     </section>
   </section>
@@ -397,6 +399,6 @@
   <input id="slack-file-input" type="file" hidden />
   <div id="emoji-picker" class="emoji-picker hidden" role="dialog" aria-label="Emoji picker"></div>
   <script src="/static/emoji.js?v=20261025-emoji"></script>
-  <script src="/static/app.js?v=20261025-emoji"></script>
+  <script src="/static/app.js?v=20261025-board"></script>
 </body>
 </html>
