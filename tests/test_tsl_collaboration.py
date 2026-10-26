@@ -19,16 +19,20 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             "board-author",
             hash_password("test-password"),
             display_name="Board Author",
+            role="super_admin",
         )
         self.recipient = db.create_user(
             "board-recipient",
             hash_password("test-password"),
             display_name="Board Recipient",
         )
+        self.department = db.list_departments()[0]
+        db.add_department_member(self.department["id"], self.recipient["id"], self.author["id"])
         self.business = db.create_business("Launch board")
         self.task = db.create_task(
             business_id=self.business["id"],
             title="Prepare launch",
+            department_id=self.department["id"],
         )
         self.author_client = TestClient(app)
         self.recipient_client = TestClient(app)
@@ -48,7 +52,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
         if response.status_code != 200:
             raise AssertionError(f"Could not log in test user: {response.text}")
 
-    def test_mentions_create_recipient_scoped_notifications_and_read_state(self):
+    def test_mentions_are_recorded_without_notifications(self):
         response = self.author_client.post(
             f"/api/tasks/{self.task['id']}/comments",
             json={"content": "Please review @BOARD-RECIPIENT and @board-recipient"},
@@ -61,23 +65,6 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             0,
         )
 
-        notifications = self.recipient_client.get("/api/notifications").json()
-        self.assertEqual(notifications["unread_count"], 1)
-        self.assertEqual(len(notifications["items"]), 1)
-        notification_id = notifications["items"][0]["id"]
-
-        forbidden_read = self.author_client.post(
-            f"/api/notifications/{notification_id}/read",
-            json={},
-        )
-        self.assertEqual(forbidden_read.status_code, 404)
-        self.assertIsNone(db.get_notification(notification_id, self.author["id"]))
-
-        marked_read = self.recipient_client.post(
-            f"/api/notifications/{notification_id}/read",
-            json={},
-        )
-        self.assertEqual(marked_read.status_code, 200)
         self.assertEqual(
             self.recipient_client.get("/api/notifications").json()["unread_count"],
             0,
@@ -86,7 +73,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
     def test_assigning_task_notifies_assignee_and_board_endpoints_work(self):
         response = self.author_client.patch(
             f"/api/tasks/{self.task['id']}",
-            json={"owner": "board-recipient"},
+            json={"assignee_ids": [self.recipient["id"]]},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -109,7 +96,8 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             json={
                 "business_id": self.business["id"],
                 "title": "Review launch assets",
-                "owner": "board-recipient",
+                "assignee_ids": [self.recipient["id"]],
+                "department_id": self.department["id"],
                 "priority": "P1",
                 "status": "open",
                 "source": "board",

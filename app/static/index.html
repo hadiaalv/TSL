@@ -7,7 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261025-board" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261102-responsive1" />
+  <link rel="stylesheet" href="/static/workspace.css?v=20261102-responsive1" />
   <link rel="icon" type="image/png" href="/public/logo.png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
 </head>
@@ -30,20 +31,32 @@
           <strong id="session-user">…</strong>
         </div>
         <div class="account-actions">
-          <a href="/admin" id="admin-link" class="admin-link hidden">Admin</a>
           <button id="btn-logout" class="btn-logout" type="button">Log out</button>
         </div>
       </div>
 
       <nav class="sidebar-nav" aria-label="Workspace navigation">
-        <a href="#home" data-route="home" class="sidebar-nav-link"><span aria-hidden="true">⌂</span><span>Home</span></a>
+        <a href="#home" data-route="home" class="sidebar-nav-link"><span aria-hidden="true">⌂</span><span>Overview</span></a>
         <a href="#brands" data-route="brands" class="sidebar-nav-link"><span aria-hidden="true">▦</span><span>Brands</span></a>
-        <a href="#work" data-route="work" class="sidebar-nav-link"><span aria-hidden="true">✓</span><span>Open Work</span><em id="open-work-count" class="count-badge">0</em></a>
-        <a href="#calendar" data-route="calendar" class="sidebar-nav-link"><span aria-hidden="true">▣</span><span>Calendar</span></a>
-        <a href="#ai" data-route="ai" class="sidebar-nav-link"><span aria-hidden="true">✦</span><span>AI Assistant</span></a>
-        <a href="#chat" data-route="chat" class="sidebar-nav-link"><span aria-hidden="true">💬</span><span>Team Chat</span></a>
-        <a href="#approvals" data-route="approvals" class="sidebar-nav-link"><span aria-hidden="true">☑</span><span>Approvals</span></a>
-        <a href="#integrations" data-route="integrations" class="sidebar-nav-link"><span aria-hidden="true">⚙</span><span>Integrations</span></a>
+        <a href="#tasks/mine" data-route="tasks/mine" class="sidebar-nav-link"><span aria-hidden="true">☺</span><span>My Tasks</span><em id="count-mine" class="count-badge hidden">0</em></a>
+        <a href="#tasks/all" data-route="tasks/all" class="sidebar-nav-link"><span aria-hidden="true">✓</span><span>All Tasks</span><em id="open-work-count" class="count-badge">0</em></a>
+        <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span aria-hidden="true">♧</span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
+        <div class="nav-group admin-only hidden" id="nav-departments">
+          <button type="button" class="nav-group-toggle" id="departments-toggle" aria-expanded="true"><span>Departments</span><span aria-hidden="true">▾</span></button>
+          <div id="sidebar-departments" class="nav-group-body"></div>
+        </div>
+        <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span aria-hidden="true">⏱</span><span>Time Logs</span></a>
+        <a href="#reports" data-route="reports" class="sidebar-nav-link admin-only hidden"><span aria-hidden="true">▤</span><span>Reports</span></a>
+        <a href="/admin" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">☰</span><span>User Management</span></a>
+        <a href="#deptmgmt" data-route="deptmgmt" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">◫</span><span>Department Management</span></a>
+        <a href="#integrations" data-route="integrations" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">⚙</span><span>Settings &amp; Integrations</span></a>
+        <details class="nav-more admin-only hidden">
+          <summary>More tools</summary>
+          <a href="#calendar" data-route="calendar" class="sidebar-nav-link"><span aria-hidden="true">▣</span><span>Calendar</span></a>
+          <a href="#ai" data-route="ai" class="sidebar-nav-link"><span aria-hidden="true">✦</span><span>AI Assistant</span></a>
+          <a href="#chat" data-route="chat" class="sidebar-nav-link"><span aria-hidden="true">💬</span><span>Team Chat</span></a>
+          <a href="#approvals" data-route="approvals" class="sidebar-nav-link admin-only hidden"><span aria-hidden="true">☑</span><span>Approvals</span></a>
+        </details>
       </nav>
 
       <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true">‹</button>
@@ -56,7 +69,8 @@
             <button id="mobile-sidebar-toggle" class="mobile-sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
             <div>
               <p class="eyebrow">The Social Links</p>
-              <h1 id="page-title">Home</h1>
+              <h1 id="page-title">Overview</h1>
+              <p id="home-welcome" class="home-welcome">Your portfolio at a glance</p>
             </div>
           </div>
           <div class="global-search">
@@ -86,8 +100,11 @@
           <div id="work-summary" class="work-summary"><p class="muted">Loading work…</p></div>
         </section>
         <section id="pending-section" class="brand-section" hidden>
-          <div class="section-heading"><div><span class="eyebrow">Needs attention</span><h2>Brands with open tasks</h2></div></div>
-          <div id="pending-brands" class="brand-grid" aria-live="polite"></div>
+          <div class="section-heading">
+            <div><span class="eyebrow">Needs attention</span><h2>Brands with open tasks</h2></div>
+            <span id="pending-total" class="pending-total" aria-live="polite"></span>
+          </div>
+          <div id="pending-brands" class="brand-grid pending-brand-grid" aria-live="polite"></div>
         </section>
         <section id="recent-section" class="brand-section">
           <div class="section-heading"><div><span class="eyebrow">Pick up where you left off</span><h2>Recent</h2></div><a href="#brands" class="text-link">All brands</a></div>
@@ -101,9 +118,9 @@
           <section class="dashboard-panel quick-actions-panel">
             <div class="section-heading"><div><span class="eyebrow">Shortcuts</span><h2>Quick Actions</h2></div></div>
             <div class="quick-actions">
-              <button type="button" id="quick-add-brand">＋ Add brand</button>
-              <button type="button" id="quick-add-task">＋ Add task</button>
-              <button type="button" id="quick-schedule-event">＋ Schedule event</button>
+              <button type="button" id="quick-add-brand" class="sa-only hidden">＋ Add brand</button>
+              <button type="button" id="quick-add-task" class="admin-only hidden">＋ Add task</button>
+              <button type="button" id="quick-schedule-event" class="admin-only hidden">＋ Schedule event</button>
             </div>
           </section>
         </div>
@@ -113,8 +130,8 @@
         <div class="section-heading">
           <div><span class="eyebrow">Your portfolio</span><h2>All Brands</h2></div>
           <div class="widget-actions">
-            <button id="btn-import-biz" class="ghost" type="button">Import brands</button>
-            <button id="btn-create-board" class="primary-action" type="button">+ Add brand</button>
+            <button id="btn-import-biz" class="ghost sa-only hidden" type="button">Import brands</button>
+            <button id="btn-create-board" class="primary-action sa-only hidden" type="button">+ Add brand</button>
           </div>
         </div>
         <label class="brand-search">
@@ -155,7 +172,7 @@
             <div id="brief-stats" class="stats"></div>
             <div id="chat" class="chat" aria-live="polite"></div>
             <form id="composer" class="composer">
-              <textarea id="input" rows="2" placeholder="Ask about your brands, tasks, and priorities…"></textarea>
+              <textarea id="input" rows="2" placeholder="Ask about your brands, tasks, and deadlines…"></textarea>
               <button type="submit" id="send">Send</button>
             </form>
             <div id="status" class="status muted"></div>
@@ -206,12 +223,43 @@
         </section>
       </section>
 
+      <section id="workspace-view" class="page-view hidden">
+        <div id="workspace-root" class="ws-root"></div>
+      </section>
+
+      <section id="notifications-view" class="page-view hidden">
+        <div id="notifications-root" class="ws-root"></div>
+      </section>
+
+      <section id="reports-view" class="page-view hidden">
+        <div id="reports-root" class="ws-root"></div>
+      </section>
+
+      <section id="deptmgmt-view" class="page-view hidden">
+        <div id="deptmgmt-root" class="ws-root"></div>
+      </section>
+
       <section id="work-view" class="page-view hidden">
         <div class="section-heading work-page-heading">
           <div><span class="eyebrow">Across all brands</span><h2>Open Work</h2><p class="muted">In progress and pending items.</p></div>
-          <button class="primary-action" type="button" id="work-add-task">+ Add task</button>
+          <button class="primary-action admin-only hidden" type="button" id="work-add-task">+ Add task</button>
         </div>
         <div id="work-list" class="work-list" aria-live="polite"><p class="muted">Loading work…</p></div>
+      </section>
+
+      <section id="timelog-view" class="page-view hidden">
+        <div class="section-heading">
+          <div><span class="eyebrow">Daily work update</span><h2>Time Log</h2><p class="muted">Time tracked while cards sit in In Progress.</p></div>
+          <button class="ghost" type="button" id="timelog-copy">Copy summary</button>
+        </div>
+        <div class="timelog-controls">
+          <label>Date <input type="date" id="timelog-date" /></label>
+          <label>Team member <select id="timelog-user"></select></label>
+        </div>
+        <div id="timelog-summary" class="work-summary" aria-live="polite"></div>
+        <div id="timelog-tasks" class="timelog-tasks"></div>
+        <h3 class="timelog-subhead">Timeline</h3>
+        <div id="timelog-entries" class="timelog-entries"></div>
       </section>
 
       <section id="chat-view" class="page-view hidden">
@@ -255,19 +303,24 @@
         <div class="brand-heading">
           <div id="board-brand-logo" class="brand-logo-header" aria-hidden="true"></div>
           <div><span class="eyebrow">Brand workspace</span><h2 id="board-title"></h2><p id="board-description" class="muted"></p>
-          <button id="edit-board-details" class="text-link" type="button">Edit details &amp; add logo</button>
+          <button id="edit-board-details" class="text-link sa-only hidden" type="button">Edit details &amp; add logo</button>
           </div>
         </div>
         <button id="board-close" class="ghost" type="button">← All brands</button>
       </header>
-      <form id="board-edit-form" class="board-edit-form hidden">
+      <form id="board-edit-form" class="board-edit-form sa-only hidden">
         <input id="board-edit-name" aria-label="Board title" maxlength="160" required />
         <input id="board-edit-description" aria-label="Board description" maxlength="2000" />
         <label class="logo-upload-field">Replace logo <input id="board-logo-file" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" /></label>
         <button type="button" id="remove-brand-logo" class="ghost">Remove logo</button>
         <button type="submit">Save details</button>
       </form>
-      <form id="board-task-form" class="board-task-form">
+      <nav class="brand-tabs" role="tablist" aria-label="Brand sections">
+        <button type="button" role="tab" class="brand-tab active" data-brand-tab="board" aria-selected="true">Board</button>
+        <button type="button" role="tab" class="brand-tab" data-brand-tab="sops" aria-selected="false">SOPs &amp; Links <em id="brand-sops-count" class="count-badge">0</em></button>
+      </nav>
+      <div id="brand-tab-board" class="brand-tab-panel">
+      <form id="board-task-form" class="board-task-form sa-only hidden">
         <input id="board-task-title" aria-label="Task title" placeholder="Add a card to this board…" maxlength="180" required />
         <select id="board-task-owner" aria-label="Assign to team member"></select>
         <input id="board-task-due" aria-label="Due date" type="date" />
@@ -281,10 +334,31 @@
       </form>
       <div id="board-columns" class="board-columns"></div>
       <div class="brand-side-panels">
+      <section class="brand-events-panel">
+        <div class="section-heading"><div><span class="eyebrow">Schedule</span><h3>Upcoming Events</h3></div><button type="button" id="brand-schedule-event" class="text-link admin-only hidden">+ Schedule</button></div>
+        <div id="brand-events-list" class="events-list"><p class="muted">Loading events…</p></div>
+      </section>
+      </div>
+      </div>
+      <div id="brand-tab-sops" class="brand-tab-panel hidden">
+      <div class="brand-side-panels">
+      <section class="brand-sops-panel">
+        <div class="section-heading"><div><span class="eyebrow">How we do it</span><h3>SOPs</h3></div></div>
+        <div id="brand-sops-list" class="brand-sops-list"><p class="muted">No SOPs yet.</p></div>
+        <form id="brand-sop-form" class="brand-sop-form sa-only hidden">
+          <input id="brand-sop-title" placeholder="SOP title (e.g. Weekly Instagram posting)" maxlength="160" aria-label="SOP title" required />
+          <textarea id="brand-sop-content" rows="5" maxlength="20000" placeholder="Steps or notes…" aria-label="SOP steps or notes"></textarea>
+          <input id="brand-sop-url" type="text" placeholder="Link to the SOP doc (optional)" maxlength="500" aria-label="SOP link" />
+          <div class="brand-sop-actions">
+            <button type="button" id="brand-sop-cancel" class="ghost hidden">Cancel edit</button>
+            <button type="submit" id="brand-sop-submit">Add SOP</button>
+          </div>
+        </form>
+      </section>
       <section class="brand-links-panel">
         <div class="section-heading"><div><span class="eyebrow">Find it fast</span><h3>Links</h3></div></div>
         <div id="brand-links-list" class="brand-links-list"><p class="muted">No links yet.</p></div>
-        <form id="brand-link-form" class="brand-link-form">
+        <form id="brand-link-form" class="brand-link-form sa-only hidden">
           <select id="brand-link-kind" aria-label="Link type">
             <option value="website">Website</option><option value="instagram">Instagram</option><option value="facebook">Facebook</option>
             <option value="tiktok">TikTok</option><option value="youtube">YouTube</option><option value="linkedin">LinkedIn</option>
@@ -295,10 +369,7 @@
           <button type="submit">Add link</button>
         </form>
       </section>
-      <section class="brand-events-panel">
-        <div class="section-heading"><div><span class="eyebrow">Schedule</span><h3>Upcoming Events</h3></div><button type="button" id="brand-schedule-event" class="text-link">+ Schedule</button></div>
-        <div id="brand-events-list" class="events-list"><p class="muted">Loading events…</p></div>
-      </section>
+      </div>
       </div>
       <div id="board-status" class="muted" role="status"></div>
     </section>
@@ -351,6 +422,7 @@
       <h3 id="quick-task-title">Add a task</h3>
       <label>Task title <input id="quick-task-name" maxlength="180" required /></label>
       <label>Brand <select id="quick-task-brand" required></select></label>
+      <label id="quick-task-department-label" class="admin-only hidden">Department <select id="quick-task-department"></select></label>
       <label>Due date <input id="quick-task-due" type="date" /></label>
       <p id="quick-task-error" class="form-error" role="alert"></p>
       <div class="modal-actions">
@@ -398,7 +470,13 @@
 
   <input id="slack-file-input" type="file" hidden />
   <div id="emoji-picker" class="emoji-picker hidden" role="dialog" aria-label="Emoji picker"></div>
+  <aside id="task-drawer" class="task-drawer hidden" role="dialog" aria-modal="true" aria-label="Task details">
+    <div class="task-drawer-backdrop" data-drawer-close></div>
+    <div class="task-drawer-panel" id="task-drawer-panel"></div>
+  </aside>
+
   <script src="/static/emoji.js?v=20261025-emoji"></script>
-  <script src="/static/app.js?v=20261025-board"></script>
+  <script src="/static/app.js?v=20261102-responsive1"></script>
+  <script src="/static/workspace.js?v=20261102-responsive1"></script>
 </body>
 </html>

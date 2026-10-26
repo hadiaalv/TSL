@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from openai import OpenAI
@@ -127,6 +128,8 @@ TOOLS = [
                 "properties": {
                     "business_id": {"type": "string"},
                     "title": {"type": "string"},
+                    "department_id": {"type": "string"},
+                    "assignee_ids": {"type": "array", "items": {"type": "string"}},
                     "category": {"type": "string", "enum": list(db.CATEGORIES)},
                     "owner": {"type": "string"},
                     "priority": {"type": "string", "enum": list(db.PRIORITIES)},
@@ -151,6 +154,8 @@ TOOLS = [
                 "properties": {
                     "task_id": {"type": "string"},
                     "title": {"type": "string"},
+                    "department_id": {"type": "string"},
+                    "assignee_ids": {"type": "array", "items": {"type": "string"}},
                     "category": {"type": "string"},
                     "owner": {"type": "string"},
                     "priority": {"type": "string"},
@@ -274,7 +279,36 @@ def _client() -> OpenAI:
     return OpenAI(api_key=settings.gemini_api_key, base_url=settings.gemini_base_url)
 
 
-def _get_business_context(args: dict[str, Any]) -> Any:
+def _history_messages(
+    history: list[dict[str, str]] | None,
+    current_message: str,
+) -> list[dict[str, str]]:
+    recent = (history or [])[-16:]
+    if (
+        recent
+        and recent[-1].get("role") == "user"
+        and recent[-1].get("content") == current_message
+    ):
+        recent = recent[:-1]
+    return [
+        {"role": item["role"], "content": item["content"]}
+        for item in recent
+        if item.get("role") in ("user", "assistant") and item.get("content")
+    ]
+
+
+def _viewer(user_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """The acting user, or None for trusted system calls without a user."""
+    if not user_id:
+        return None
+    return db.get_user(user_id) or {"id": user_id, "role": "none"}
+
+
+def _visible_businesses(viewer: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
+    return db.list_businesses()
+
+
+def _get_business_context(args: dict[str, Any], viewer: Optional[dict[str, Any]] = None) -> Any:
     biz = None
     if args.get("business_id"):
         biz = db.get_business(args["business_id"])
@@ -283,7 +317,7 @@ def _get_business_context(args: dict[str, Any]) -> Any:
     if not biz:
         return {"error": "business not found"}
     notes = db.list_notes(business_id=biz["id"], limit=20)
-    tasks = db.list_tasks(business_id=biz["id"], open_only=True, limit=50)
+    tasks = db.list_tasks(business_id=biz["id"], open_only=True, limit=50, viewer=viewer)
     return {"business": biz, "notes": notes, "open_tasks": tasks}
 
 
@@ -292,14 +326,19 @@ def _run_tool(
     args: dict[str, Any],
     user_id: Optional[str] = None,
 ) -> Any:
+    viewer = _viewer(user_id)
+    is_sa = viewer is None or viewer.get("role") == "super_admin"
+    can_manage_tasks = is_sa or bool(viewer and viewer.get("role") == "admin")
     try:
         if name == "get_attention_brief":
-            return db.attention_brief()
+            return db.attention_brief(viewer=viewer)
         if name == "list_businesses":
-            return db.list_businesses()
+            return _visible_businesses(viewer)
         if name == "get_business_context":
-            return _get_business_context(args)
+            return _get_business_context(args, viewer)
         if name == "add_business":
+            if not is_sa:
+                return {"error": "Only the super admin can manage brands."}
             return db.create_business(
                 name=args["name"],
                 description=args.get("description", ""),
@@ -307,6 +346,8 @@ def _run_tool(
                 slug=args.get("slug"),
             )
         if name == "update_business_context":
+            if not is_sa:
+                return {"error": "Only the super admin can manage brands."}
             return db.update_business(
                 args["business_id"],
                 description=args.get("description"),
@@ -317,9 +358,31 @@ def _run_tool(
                 business_id=args.get("business_id"),
                 status=args.get("status"),
                 open_only=args.get("open_only", True),
+                viewer=viewer,
             )
         if name == "create_task":
-            return db.create_task(
+            if not can_manage_tasks:
+                return {"error": "Only admins can create tasks."}
+            if args["business_id"] not in {
+                business["id"] for business in _visible_businesses(viewer)
+            }:
+                return {"error": "You can only create tasks for brands in your work areas."}
+            if not is_sa and args.get("owner", "me") not in ("", "me"):
+                return {"error": "Assign tasks from the Tasks workspace so department access can be checked."}
+            department_id = args.get("department_id")
+            if not is_sa and (
+                not department_id
+                or department_id not in db.user_department_ids(str(viewer["id"]))
+            ):
+                return {"error": "Choose one of your departments for this task."}
+            try:
+                assignee_ids = db.validate_task_assignees(
+                    department_id,
+                    args.get("assignee_ids", []),
+                )
+            except ValueError as error:
+                return {"error": str(error)}
+            task = db.create_task(
                 business_id=args["business_id"],
                 title=args["title"],
                 category=args.get("category", "other"),
@@ -327,17 +390,61 @@ def _run_tool(
                 priority=args.get("priority", "P2"),
                 deadline=args.get("deadline"),
                 status=args.get("status", "open"),
+                department_id=department_id,
+                assignee_ids=assignee_ids,
                 next_follow_up=args.get("next_follow_up"),
                 waiting_on=args.get("waiting_on", ""),
                 notes=args.get("notes", ""),
                 source=args.get("source", "cos_agent"),
+                actor_user_id=user_id,
             )
+            db.notify_task_event(task["id"], "assignment", assignee_ids, user_id)
+            return task
         if name == "update_task":
-            return db.update_task(
-                args["task_id"],
-                **{k: v for k, v in args.items() if k != "task_id"},
-            )
+            changes = {k: v for k, v in args.items() if k not in ("task_id", "actor_user_id")}
+            previous = db.get_task(args["task_id"], viewer=viewer)
+            if not previous:
+                return {"error": "task not found"}
+            if not can_manage_tasks:
+                if not db.user_is_task_assignee(user_id, args["task_id"]):
+                    return {"error": "Only assignees can update this task."}
+                if set(changes) - {"status"}:
+                    return {"error": "You can only change a task's status."}
+            elif viewer and viewer.get("role") == "admin":
+                allowed_departments = set(db.user_department_ids(str(viewer["id"])))
+                if previous.get("department_id") not in allowed_departments:
+                    return {"error": "You can only manage tasks in your departments."}
+                if "owner" in changes:
+                    return {"error": "Change task assignments from the Tasks workspace."}
+                department_id = changes.get("department_id", previous.get("department_id"))
+                if department_id not in allowed_departments:
+                    return {"error": "You can only manage tasks in your departments."}
+                if "assignee_ids" in changes or "department_id" in changes:
+                    try:
+                        changes["assignee_ids"] = db.validate_task_assignees(
+                            department_id,
+                            changes.get("assignee_ids", previous.get("assignee_ids", [])),
+                        )
+                    except ValueError as error:
+                        return {"error": str(error)}
+            updated = db.update_task(args["task_id"], actor_user_id=user_id, **changes)
+            if not updated:
+                return {"error": "task not found"}
+            before = set(previous.get("assignee_ids", []))
+            after = set(updated.get("assignee_ids", []))
+            db.notify_task_event(args["task_id"], "assignment", sorted(after - before), user_id)
+            return updated
         if name == "add_knowledge_note":
+            if not can_manage_tasks:
+                return {"error": "Only admins can add portfolio knowledge."}
+            business_id = args.get("business_id")
+            if (
+                business_id
+                and viewer
+                and viewer.get("role") != "super_admin"
+                and business_id not in {b["id"] for b in _visible_businesses(viewer)}
+            ):
+                return {"error": "Business not found"}
             return db.add_note(
                 title=args["title"],
                 body=args["body"],
@@ -353,6 +460,8 @@ def _run_tool(
                 payload=args.get("payload"),
             )
         if name == "list_pending_approvals":
+            if not can_manage_tasks:
+                return {"error": "Admin access required."}
             return db.list_approvals("pending")
         if name == "create_gmail_draft":
             if not user_id:
@@ -413,8 +522,8 @@ def chat(
 ) -> dict[str, Any]:
     """Run a Chief of Staff turn with tool loop. Returns assistant text + tool trace."""
     client = _client()
-    brief = db.attention_brief()
-    businesses = db.list_businesses()
+    brief = db.attention_brief(viewer=_viewer(user_id))
+    businesses = _visible_businesses(_viewer(user_id))
     logger.info(
         "[CONTEXT] Chief of Staff portfolio context loaded businesses=%s",
         len(businesses),
@@ -439,25 +548,31 @@ def chat(
             ),
         },
     ]
-    if history:
-        for m in history[-16:]:
-            if m.get("role") in ("user", "assistant") and m.get("content"):
-                messages.append({"role": m["role"], "content": m["content"]})
+    messages.extend(_history_messages(history, user_message))
     messages.append({"role": "user", "content": user_message})
 
     tool_trace: list[dict[str, Any]] = []
     final_text = ""
+    chat_started = time.perf_counter()
+    gemini_requests = 0
 
     for _ in range(8):
+        request_started = time.perf_counter()
+        gemini_requests += 1
         logger.info("[AI] Gemini request started model=%s", settings.gemini_model)
-        resp = client.chat.completions.create(
-            model=settings.gemini_model,
-            messages=messages,
-            tools=TOOLS,
-            tool_choice="auto",
-            temperature=0.3,
-        )
-        logger.info("[AI] Gemini request completed")
+        try:
+            resp = client.chat.completions.create(
+                model=settings.gemini_model,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0.3,
+            )
+        finally:
+            logger.info(
+                "[AI] Gemini request completed elapsed_s=%.2f",
+                time.perf_counter() - request_started,
+            )
         choice = resp.choices[0]
         msg = choice.message
 
@@ -476,8 +591,8 @@ def chat(
                             },
                             # Gemini requires its thought signature echoed back with tool calls.
                             **(
-                                {"extra_content": tc.model_extra["extra_content"]}
-                                if (tc.model_extra or {}).get("extra_content")
+                                {"extra_content": extra_content}
+                                if (extra_content := (getattr(tc, "model_extra", None) or {}).get("extra_content"))
                                 else {}
                             ),
                         }
@@ -490,7 +605,13 @@ def chat(
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                tool_started = time.perf_counter()
                 result = _run_tool(tc.function.name, args, user_id=user_id)
+                logger.info(
+                    "[AI] Tool completed name=%s elapsed_s=%.2f",
+                    tc.function.name,
+                    time.perf_counter() - tool_started,
+                )
                 tool_trace.append({"tool": tc.function.name, "args": args, "result": result})
                 messages.append(
                     {
@@ -517,4 +638,10 @@ def chat(
     if persist:
         db.save_message("user", user_message)
         db.save_message("assistant", final_text, meta={"tools": [t["tool"] for t in tool_trace]})
+    logger.info(
+        "[AI] Chat completed elapsed_s=%.2f gemini_requests=%s tools=%s",
+        time.perf_counter() - chat_started,
+        gemini_requests,
+        len(tool_trace),
+    )
     return {"reply": final_text, "tools_used": tool_trace}

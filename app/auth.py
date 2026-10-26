@@ -89,8 +89,12 @@ def require_roles(request: Request, *roles: str) -> dict[str, Any]:
     user = require_user(request)
     role = (user.get("role") or "operator").strip()
     if role not in roles:
-        raise HTTPException(403, "Forbidden — admin access required")
+        raise HTTPException(403, "Insufficient role permissions")
     return user
+
+
+def require_task_manager(request: Request) -> dict[str, Any]:
+    return require_roles(request, "admin", "super_admin")
 
 
 def require_super_admin(request: Request) -> dict[str, Any]:
@@ -98,7 +102,15 @@ def require_super_admin(request: Request) -> dict[str, Any]:
 
 
 def can_manage_users(user: dict[str, Any]) -> bool:
-    return (user.get("role") or "") in ("super_admin", "admin")
+    return (user.get("role") or "") == "super_admin"
+
+
+def can_manage_tasks(user: dict[str, Any]) -> bool:
+    return (user.get("role") or "") in ("admin", "super_admin")
+
+
+def is_super_admin(user: Optional[dict[str, Any]]) -> bool:
+    return bool(user) and (user.get("role") or "") == "super_admin"
 
 
 def login_user(request: Request, user: dict[str, Any]) -> None:
@@ -144,5 +156,7 @@ def public_user(user: dict[str, Any]) -> dict[str, Any]:
         "username": user["username"],
         "display_name": user.get("display_name") or user["username"],
         "role": role,
-        "can_manage_users": role in ("super_admin", "admin"),
+        "can_manage_users": role == "super_admin",
+        "can_manage_tasks": role in ("admin", "super_admin"),
+        "is_super_admin": role == "super_admin",
     }

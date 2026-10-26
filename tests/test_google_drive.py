@@ -1026,7 +1026,7 @@ class GoogleDriveTests(unittest.TestCase):
         ]
 
         with patch(
-            "app.main.auth.require_user",
+            "app.main.auth.require_super_admin",
             return_value=self.user,
         ), patch(
             "app.integrations.google_drive.fetch_recent_drive_files",
@@ -1077,7 +1077,7 @@ class GoogleDriveTests(unittest.TestCase):
         }
 
         with patch(
-            "app.main.auth.require_user",
+            "app.main.auth.require_super_admin",
             return_value=self.user,
         ), patch(
             "app.integrations.google_drive.verify_drive_access",
@@ -1167,7 +1167,7 @@ class GoogleDriveTests(unittest.TestCase):
         }
 
         with patch(
-            "app.main.auth.require_user",
+            "app.main.auth.require_super_admin",
             return_value=self.user,
         ), patch(
             "app.integrations.google_drive.verify_drive_access",
@@ -1234,7 +1234,7 @@ class GoogleDriveTests(unittest.TestCase):
         }
 
         with patch(
-            "app.main.auth.require_user",
+            "app.main.auth.require_super_admin",
             return_value=self.user,
         ), patch(
             "app.integrations.google_drive.verify_drive_access",
@@ -1259,7 +1259,7 @@ class GoogleDriveTests(unittest.TestCase):
         business = db.create_business(name="Example Brand")
 
         with patch(
-            "app.main.auth.require_user",
+            "app.main.auth.require_super_admin",
             return_value=self.user,
         ), patch(
             "app.integrations.google_drive.verify_drive_access",

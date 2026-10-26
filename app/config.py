@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     # App login (session cookie). Bootstrap first user when DB has none.
     auth_secret: str = "change-me-to-a-long-random-string"
     auth_username: str = "admin"
-    auth_password: str = ""
+    auth_password: str = "admin1234"
     auth_session_hours: int = 168
     auth_bypass_local: bool = False
 

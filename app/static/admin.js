@@ -95,9 +95,7 @@ function renderAttention(attn) {
         .slice(0, 6)
         .map(
           (t) =>
-            `<div class="attn-item"><span class="prio ${escapeHtml(t.priority || "")}">${escapeHtml(
-              t.priority || ""
-            )}</span> ${escapeHtml(t.title)} <span class="row-sub">· ${escapeHtml(
+            `<div class="attn-item">${escapeHtml(t.title)} <span class="row-sub">· ${escapeHtml(
               t.business_name || ""
             )}</span></div>`
         )
@@ -214,9 +212,6 @@ function renderTasks(tasks) {
             t.deadline ? ` · due ${escapeHtml(String(t.deadline).slice(0, 10))}` : ""
           }</div>
         </div>
-        <div><span class="prio ${escapeHtml(t.priority || "")}">${escapeHtml(
-          t.priority || "—"
-        )}</span></div>
         <div><span class="badge">${escapeHtml(t.category || "task")}</span></div>
         <div class="row-sub">${escapeHtml(t.status || "")}</div>
       </div>`

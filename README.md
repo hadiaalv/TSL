@@ -8,7 +8,7 @@ Team workspace for shared boards, task cards, calendar events, notifications, an
 |---|---|
 | Single CoS chat interface (web UI) | ✅ |
 | Business-backed boards + task cards | ✅ |
-| Task comments, @mentions, assignments, and recipient-scoped notifications | ✅ |
+| Shared brand/task visibility, collaboration, and assignment-only task notifications | ✅ |
 | Google Calendar upcoming events (read-only) | ✅ (needs Google credentials and calendar consent) |
 | Task OS: Business / Task / Owner / Priority / Deadline / Status / Next follow-up / Notes / Source | ✅ |
 | Categories: NPD, line forms, supplier/client, retailer/distributor outreach, decisions, waiting-on, delegated, etc. | ✅ |
@@ -59,6 +59,17 @@ Try: **“What needs my attention right now?”**
 
 For local development only, set `AUTH_BYPASS_LOCAL=true` in `.env` to skip the login screen when the app is bound to a loopback address. This bypass is disabled by default and should remain disabled on exposed or deployed instances.
 
+## Departments & workspace
+
+Tasks belong to departments (seeded: Content Writing & Planning, Graphic Designing, Social Media & Web Maintenance, Ads Management, Web Development). The database migrates automatically on startup, backs up first when needed, and preserves existing data. All signed-in users can view every active brand and task, including uncategorized tasks.
+
+- Only the Super Admin creates users and manages roles, departments, memberships, brands, and integrations. Admins manage tasks within their departments; Operators can update status and checklist progress only on tasks assigned to them.
+- Assignees must be active members of the task's department. Any signed-in user can comment, but task notifications are sent only to newly assigned people.
+- Views: `#tasks/mine|all|unassigned|completed|overdue`, `#dept/<id>` Kanban boards, `#notifications`, `#reports`, `#deptmgmt`.
+- Time is always logged to the user who moved the task to In Progress, never the task creator.
+
+Run tests: `.venv/bin/python -m unittest discover -s tests`
+
 ## Google (optional)
 
 1. Google Cloud Console → OAuth client (Web)  
@@ -72,8 +83,8 @@ The homepage Upcoming Events panel uses workspace events (brand-linked scheduled
 ## Team workspace scope
 
 - Boards reuse the existing business records; cards reuse the existing task records.
-- Active users can see and update the shared workspace. Board-level membership, private boards, and invitation workflows are not implemented; user accounts are managed by an administrator.
-- Comments can mention active users by `@username`. Mentions and task assignments create notifications. Notification sound is off by default and its preference is saved per user.
+- Active users can see the shared workspace; role and assignment checks control changes. Board-level membership, private boards, and invitation workflows are not implemented; user accounts are managed by an administrator.
+- Comments can mention active users by `@username`, but mentions and comments do not create notifications. Assignment notifications go only to newly assigned users. Notification sound is off by default and its preference is saved per user.
 - The existing `new_line_form` task category is available, but no external new-line-form template or submission workflow is included.
 - Run the automated suite with `python -m unittest discover -s tests`.
 

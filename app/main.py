@@ -194,6 +194,18 @@ class BrandLinkIn(BaseModel):
     url: str = Field(min_length=3, max_length=500)
 
 
+class BrandSopIn(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    content: str = Field(default="", max_length=20000)
+    url: str = Field(default="", max_length=500)
+
+
+class BrandSopPatch(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=160)
+    content: Optional[str] = Field(default=None, max_length=20000)
+    url: Optional[str] = Field(default=None, max_length=500)
+
+
 class WorkspaceEventIn(BaseModel):
     business_id: str
     title: str = Field(min_length=1, max_length=180)
@@ -211,8 +223,8 @@ class BrandImportIn(BaseModel):
 
 
 class TaskIn(BaseModel):
-    business_id: str
-    title: str
+    business_id: Optional[str] = None
+    title: str = Field(min_length=1, max_length=300)
     category: str = "other"
     owner: str = "me"
     priority: str = "P2"
@@ -221,11 +233,16 @@ class TaskIn(BaseModel):
     next_follow_up: Optional[str] = None
     waiting_on: str = ""
     notes: str = ""
+    description: Optional[str] = None
     source: str = "manual"
+    department_id: Optional[str] = None
+    assignee_ids: list[str] = Field(default_factory=list)
+    checklist: list[dict[str, Any]] = Field(default_factory=list)
+    links: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class TaskPatch(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=1, max_length=300)
     category: Optional[str] = None
     owner: Optional[str] = None
     priority: Optional[str] = None
@@ -234,6 +251,31 @@ class TaskPatch(BaseModel):
     next_follow_up: Optional[str] = None
     waiting_on: Optional[str] = None
     notes: Optional[str] = None
+    description: Optional[str] = None
+    department_id: Optional[str] = None
+    assignee_ids: Optional[list[str]] = None
+    checklist: Optional[list[dict[str, Any]]] = None
+    links: Optional[list[dict[str, Any]]] = None
+
+
+class DepartmentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = ""
+    color: str = Field(default="#6366f1", pattern=r"^#[0-9a-fA-F]{6}$")
+    icon: str = Field(default="", max_length=8)
+
+
+class DepartmentPatch(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    description: Optional[str] = None
+    color: Optional[str] = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    icon: Optional[str] = Field(default=None, max_length=8)
+    sort_order: Optional[int] = None
+    status: Optional[str] = None
+
+
+class DepartmentMemberIn(BaseModel):
+    user_id: str
 
 
 class TaskCommentIn(BaseModel):
@@ -346,7 +388,10 @@ def api_me(
     user = auth.require_user(request)
 
     return {
-        "user": auth.public_user(user)
+        "user": {
+            **auth.public_user(user),
+            "department_ids": db.user_department_ids(str(user["id"])),
+        }
     }
 
 
@@ -375,6 +420,7 @@ def _admin_user_row(
 
     return {
         **auth.public_user(u),
+        "department_ids": db.user_department_ids(u["id"]),
         "status": u.get("status"),
         "created_at": u.get("created_at"),
         "google_connected": bool(
@@ -402,13 +448,9 @@ def _admin_user_row(
 def admin_overview(
     request: Request,
 ) -> dict[str, Any]:
-    """Portfolio snapshot for super admin / admin tracking."""
+    """Portfolio snapshot for super admin tracking."""
 
-    auth.require_roles(
-        request,
-        "super_admin",
-        "admin",
-    )
+    auth.require_super_admin(request)
 
     users = [
         _admin_user_row(u)
@@ -494,11 +536,7 @@ def admin_overview(
 def admin_list_users(
     request: Request,
 ) -> dict[str, Any]:
-    auth.require_roles(
-        request,
-        "super_admin",
-        "admin",
-    )
+    auth.require_super_admin(request)
 
     rows = db.list_users(
         include_inactive=True
@@ -517,26 +555,11 @@ def admin_create_user(
     request: Request,
     body: AdminUserCreate,
 ) -> dict[str, Any]:
-    actor = auth.require_roles(
-        request,
-        "super_admin",
-        "admin",
-    )
+    auth.require_super_admin(request)
 
-    role = (
-        body.role
-        if body.role in db.USER_ROLES
-        else "operator"
-    )
-
-    if (
-        role == "super_admin"
-        and actor.get("role") != "super_admin"
-    ):
-        raise HTTPException(
-            403,
-            "Only super_admin can create super_admin users",
-        )
+    role = body.role or "operator"
+    if role not in db.USER_ROLES:
+        raise HTTPException(400, "Invalid role")
 
     if db.get_user_by_username(
         body.username
@@ -575,11 +598,7 @@ def admin_patch_user(
     user_id: str,
     body: AdminUserPatch,
 ) -> dict[str, Any]:
-    actor = auth.require_roles(
-        request,
-        "super_admin",
-        "admin",
-    )
+    actor = auth.require_super_admin(request)
 
     target = db.get_user(user_id)
 
@@ -625,15 +644,33 @@ def admin_patch_user(
             )
 
         if (
-            body.role == "super_admin"
-            and actor.get("role") != "super_admin"
+            target["id"] == actor["id"]
+            and body.role != target.get("role")
         ):
             raise HTTPException(
-                403,
-                "Only super_admin can assign super_admin",
+                400,
+                "Cannot change your own role",
             )
 
         fields["role"] = body.role
+
+    if (
+        target.get("role") == "super_admin"
+        and target.get("status") == "active"
+        and (
+            fields.get("role", "super_admin") != "super_admin"
+            or fields.get("status", "active") != "active"
+        )
+        and sum(
+            1
+            for u in db.list_users(include_inactive=False)
+        )
+        <= 1
+    ):
+        raise HTTPException(
+            400,
+            "At least one active super admin is required",
+        )
 
     if body.password:
         if len(body.password) < 8:
@@ -681,13 +718,29 @@ def health() -> dict[str, Any]:
 
 
 @app.get("/api/brief")
-def brief() -> dict[str, Any]:
-    return db.attention_brief()
+def brief(request: Request) -> dict[str, Any]:
+    return db.attention_brief(viewer=auth.require_user(request))
+
+
+def _visible_business_ids(_user: dict[str, Any]) -> set[str]:
+    return {str(row["id"]) for row in db.list_businesses()}
+
+
+def _require_business_access(user: dict[str, Any], business_id: str) -> dict[str, Any]:
+    business = db.get_business(business_id)
+    if not business:
+        raise HTTPException(404, "Brand not found")
+    if auth.is_super_admin(user) or user.get("role") == "admin":
+        return business
+    if business_id not in _visible_business_ids(user):
+        raise HTTPException(404, "Brand not found")
+    return business
 
 
 @app.get("/api/businesses")
 def businesses(request: Request) -> list[dict[str, Any]]:
     user = auth.require_user(request)
+    visible_businesses = _visible_business_ids(user)
     preferences = {
         item["business_id"]: item for item in db.list_brand_preferences(str(user["id"]))
     }
@@ -698,6 +751,7 @@ def businesses(request: Request) -> list[dict[str, Any]]:
             "last_visited_at": preferences.get(business["id"], {}).get("last_visited_at"),
         }
         for business in db.list_businesses()
+        if business["id"] in visible_businesses
     ]
 
 
@@ -706,7 +760,7 @@ def create_business(
     request: Request,
     body: BusinessIn,
 ) -> dict[str, Any]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     return db.create_business(
         name=body.name,
         description=body.description,
@@ -784,7 +838,7 @@ async def upload_business_logo(
     business_id: str,
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     business = db.get_business(business_id)
     if not business:
         raise HTTPException(404, "Brand not found")
@@ -810,7 +864,7 @@ async def upload_business_logo(
 
 @app.delete("/api/businesses/{business_id}/logo")
 def remove_business_logo(request: Request, business_id: str) -> dict[str, Any]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     business = db.get_business(business_id)
     if not business:
         raise HTTPException(404, "Brand not found")
@@ -834,15 +888,13 @@ def set_business_star(
 
 @app.get("/api/businesses/{business_id}/links")
 def list_brand_links(request: Request, business_id: str) -> list[dict[str, Any]]:
-    auth.require_user(request)
-    if not db.get_business(business_id):
-        raise HTTPException(404, "Brand not found")
+    _require_business_access(auth.require_user(request), business_id)
     return db.list_brand_links(business_id)
 
 
 @app.post("/api/businesses/{business_id}/links")
 def add_brand_link(request: Request, business_id: str, body: BrandLinkIn) -> dict[str, Any]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     if not db.get_business(business_id):
         raise HTTPException(404, "Brand not found")
     url = body.url.strip()
@@ -856,17 +908,77 @@ def add_brand_link(request: Request, business_id: str, body: BrandLinkIn) -> dic
 
 @app.delete("/api/businesses/{business_id}/links/{link_id}")
 def delete_brand_link(request: Request, business_id: str, link_id: str) -> dict[str, bool]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     if not db.delete_brand_link(business_id, link_id):
         raise HTTPException(404, "Link not found")
+    return {"ok": True}
+
+
+def _normalize_sop_url(raw: str) -> str:
+    url = raw.strip()
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    if not re.match(r"^https?://[^\s/]+\.[^\s/]+", url, re.I):
+        raise HTTPException(422, "Enter a valid link")
+    return url
+
+
+@app.get("/api/businesses/{business_id}/sops")
+def list_brand_sops(request: Request, business_id: str) -> list[dict[str, Any]]:
+    _require_business_access(auth.require_user(request), business_id)
+    return db.list_brand_sops(business_id)
+
+
+@app.post("/api/businesses/{business_id}/sops")
+def add_brand_sop(request: Request, business_id: str, body: BrandSopIn) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    if not db.get_business(business_id):
+        raise HTTPException(404, "Brand not found")
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(422, "Title is required")
+    return db.add_brand_sop(
+        business_id,
+        title,
+        body.content.strip(),
+        _normalize_sop_url(body.url),
+        created_by=str(actor["id"]),
+    )
+
+
+@app.patch("/api/businesses/{business_id}/sops/{sop_id}")
+def update_brand_sop(
+    request: Request, business_id: str, sop_id: str, body: BrandSopPatch
+) -> dict[str, Any]:
+    auth.require_super_admin(request)
+    if not db.get_brand_sop(business_id, sop_id):
+        raise HTTPException(404, "SOP not found")
+    title = body.title.strip() if body.title is not None else None
+    if title == "":
+        raise HTTPException(422, "Title is required")
+    return db.update_brand_sop(
+        business_id,
+        sop_id,
+        title=title,
+        content=body.content.strip() if body.content is not None else None,
+        url=_normalize_sop_url(body.url) if body.url is not None else None,
+    )  # type: ignore[return-value]
+
+
+@app.delete("/api/businesses/{business_id}/sops/{sop_id}")
+def delete_brand_sop(request: Request, business_id: str, sop_id: str) -> dict[str, bool]:
+    auth.require_super_admin(request)
+    if not db.delete_brand_sop(business_id, sop_id):
+        raise HTTPException(404, "SOP not found")
     return {"ok": True}
 
 
 @app.post("/api/businesses/{business_id}/visit")
 def visit_business(request: Request, business_id: str) -> dict[str, bool]:
     user = auth.require_user(request)
-    if not db.get_business(business_id):
-        raise HTTPException(404, "Brand not found")
+    _require_business_access(user, business_id)
     db.record_brand_visit(str(user["id"]), business_id)
     return {"ok": True}
 
@@ -877,12 +989,18 @@ def workspace_events(
     business_id: Optional[str] = None,
     limit: int = Query(default=100, ge=1, le=250),
 ) -> list[dict[str, Any]]:
-    auth.require_user(request)
-    if business_id and not db.get_business(business_id):
-        raise HTTPException(404, "Brand not found")
+    user = auth.require_user(request)
+    if business_id:
+        _require_business_access(user, business_id)
+    visible_business_ids = (
+        None
+        if auth.is_super_admin(user) or user.get("role") == "admin"
+        else sorted(_visible_business_ids(user))
+    )
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return db.list_workspace_events(
         business_id=business_id,
+        business_ids=visible_business_ids,
         from_time=now,
         limit=limit,
     )
@@ -893,7 +1011,7 @@ def create_workspace_event(
     request: Request,
     body: WorkspaceEventIn,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     if not db.get_business(body.business_id):
         raise HTTPException(400, "Choose an existing brand.")
     title = body.title.strip()
@@ -914,16 +1032,17 @@ def create_workspace_event(
 
 @app.get("/api/activity")
 def recent_activity(request: Request) -> list[dict[str, Any]]:
-    auth.require_user(request)
-    return db.list_recent_activity()
+    return db.list_recent_activity(viewer=auth.require_user(request))
 
 
 @app.post("/api/businesses/import")
 def import_businesses(
+    request: Request,
     body: BrandImportIn,
 ) -> dict[str, Any]:
     """Create one business per brand brief (markdown headings or JSON items)."""
 
+    auth.require_super_admin(request)
     payloads = normalize_import_items(
         body.items,
         body.markdown,
@@ -985,13 +1104,7 @@ def get_business(
     business_id: str,
 ) -> dict[str, Any]:
     user = auth.require_user(request)
-    biz = db.get_business(business_id)
-
-    if not biz:
-        raise HTTPException(
-            404,
-            "Business not found",
-        )
+    biz = _require_business_access(user, business_id)
 
     return {
         "business": biz,
@@ -1001,6 +1114,7 @@ def get_business(
         "tasks": db.list_tasks(
             business_id=business_id,
             open_only=True,
+            viewer=user,
         ),
         "drive_sync": db.get_google_drive_business_sync(
             str(user["id"]),
@@ -1015,7 +1129,7 @@ def patch_business(
     business_id: str,
     body: BusinessPatch,
 ) -> dict[str, Any]:
-    auth.require_user(request)
+    auth.require_super_admin(request)
     fields = body.model_dump(exclude_none=True)
     if "name" in fields:
         fields["name"] = fields["name"].strip()
@@ -1027,25 +1141,115 @@ def patch_business(
     return updated
 
 
+TASK_VIEWS = {"mine", "unassigned", "completed", "overdue"}
+
+
+def _clean_deadline(value: Optional[str], label: str) -> Optional[str]:
+    if not value:
+        return None
+    try:
+        datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(422, f"{label} must be an ISO date") from e
+    return value.strip()
+
+
+def _clean_checklist(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(items) > 100:
+        raise HTTPException(422, "Checklist is limited to 100 items")
+    out = []
+    for item in items:
+        text = str(item.get("text") or "").strip()[:300]
+        if not text:
+            raise HTTPException(422, "Checklist items need text")
+        out.append({"text": text, "done": bool(item.get("done"))})
+    return out
+
+
+def _clean_links(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if len(items) > 50:
+        raise HTTPException(422, "Links are limited to 50 items")
+    out = []
+    for item in items:
+        url = str(item.get("url") or "").strip()
+        if not re.match(r"^https?://[^\s]+$", url, re.IGNORECASE):
+            raise HTTPException(422, "Links and attachments must be http(s) URLs")
+        kind = "attachment" if item.get("kind") == "attachment" else "link"
+        out.append({"url": url[:2000], "label": str(item.get("label") or url)[:200], "kind": kind})
+    return out
+
+
+def _validate_task_fields(fields: dict[str, Any]) -> None:
+    if fields.get("status") is not None and fields["status"] not in db.TASK_STATUSES:
+        raise HTTPException(422, "Invalid status")
+    if fields.get("priority") is not None and fields["priority"] not in db.PRIORITIES:
+        raise HTTPException(422, "Invalid priority")
+    for key in ("deadline", "next_follow_up"):
+        if key in fields:
+            fields[key] = _clean_deadline(fields[key], key)
+    if fields.get("checklist") is not None:
+        fields["checklist"] = _clean_checklist(fields["checklist"])
+    if fields.get("links") is not None:
+        fields["links"] = _clean_links(fields["links"])
+
+
+def _check_assignment(department_id: Optional[str], assignee_ids: list[str]) -> list[str]:
+    if department_id:
+        dept = db.get_department(department_id)
+        if not dept or dept["status"] != "active":
+            raise HTTPException(400, "Department not found or inactive")
+    try:
+        return db.validate_task_assignees(department_id, assignee_ids)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+def _general_business_id() -> str:
+    biz = db.get_business_by_slug("general")
+    if not biz:
+        biz = db.create_business("General", description="Tasks not tied to a brand", slug="general")
+    return biz["id"]
+
+
+def _visible_task(user: dict[str, Any], task_id: str) -> dict[str, Any]:
+    task = db.get_task(task_id, viewer=user)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return task
+
+
 @app.get("/api/tasks")
 def tasks(
+    request: Request,
     business_id: Optional[str] = None,
     status: Optional[str] = None,
     open_only: bool = True,
+    department_id: Optional[str] = None,
+    assignee_id: Optional[str] = None,
+    priority: Optional[str] = None,
+    view: Optional[str] = None,
+    limit: int = 300,
 ) -> list[dict[str, Any]]:
+    user = auth.require_user(request)
+    if view and view not in TASK_VIEWS:
+        raise HTTPException(422, "Invalid view")
     return db.list_tasks(
         business_id=business_id,
         status=status,
-        open_only=open_only,
+        open_only=open_only and view != "completed",
+        department_id=department_id,
+        assignee_id=assignee_id,
+        priority=priority,
+        view=view,
+        viewer=user,
+        limit=max(1, min(limit, 1000)),
     )
 
 
 @app.get("/api/tasks/{task_id}")
-def get_task(task_id: str) -> dict[str, Any]:
-    row = db.get_task(task_id)
-    if not row:
-        raise HTTPException(404, "Task not found")
-    return row
+def get_task(request: Request, task_id: str) -> dict[str, Any]:
+    user = auth.require_user(request)
+    return _visible_task(user, task_id)
 
 
 @app.post("/api/tasks")
@@ -1053,25 +1257,29 @@ def create_task(
     request: Request,
     body: TaskIn,
 ) -> dict[str, Any]:
-    actor = auth.require_user(request)
-    if not db.get_business(
-        body.business_id
-    ):
-        raise HTTPException(
-            400,
-            "Unknown business_id",
-        )
-
-    task = db.create_task(
-        **body.model_dump()
-    )
-    if body.owner.strip() != "me":
-        db.create_task_assignment_notification(
-            task["id"],
-            body.owner.strip(),
-            str(actor["id"]),
-        )
-    return task
+    actor = auth.require_task_manager(request)
+    fields = body.model_dump()
+    _validate_task_fields(fields)
+    business_id = body.business_id or _general_business_id()
+    if not db.get_business(business_id):
+        raise HTTPException(400, "Unknown business_id")
+    if actor.get("role") == "admin" and business_id not in _visible_business_ids(actor):
+        raise HTTPException(403, "You can only create tasks for brands in your work areas")
+    fields["business_id"] = business_id
+    if actor.get("role") == "admin":
+        if not body.department_id:
+            raise HTTPException(422, "Choose one of your departments for this task")
+        if body.department_id not in db.user_department_ids(str(actor["id"])):
+            raise HTTPException(403, "You can only create tasks in your departments")
+    assignee_ids = _check_assignment(body.department_id, body.assignee_ids)
+    fields["assignee_ids"] = assignee_ids
+    description = fields.pop("description", None)
+    if description is not None and not fields.get("notes"):
+        fields["notes"] = description
+    fields.pop("owner", None)
+    task = db.create_task(**fields, actor_user_id=str(actor["id"]))
+    db.notify_task_event(task["id"], "assignment", assignee_ids, str(actor["id"]))
+    return db.get_task(task["id"]) or task
 
 
 @app.patch("/api/tasks/{task_id}")
@@ -1081,52 +1289,236 @@ def patch_task(
     body: TaskPatch,
 ) -> dict[str, Any]:
     actor = auth.require_user(request)
-    previous = db.get_task(task_id)
-    updated = db.update_task(
-        task_id,
-        **body.model_dump(
-            exclude_none=True
-        ),
+    previous = _visible_task(actor, task_id)
+    fields = {
+        k: v
+        for k, v in body.model_dump().items()
+        if k in body.model_fields_set and (v is not None or k in ("deadline", "next_follow_up", "department_id"))
+    }
+    _validate_task_fields(fields)
+    if not auth.can_manage_tasks(actor):
+        if not db.user_is_task_assignee(str(actor["id"]), task_id):
+            raise HTTPException(403, "Only assignees can update this task")
+        if set(fields) - {"status", "checklist"}:
+            raise HTTPException(403, "You can only update status and checklist progress")
+        if "checklist" in fields:
+            old = [str(i.get("text")) for i in previous.get("checklist", [])]
+            if old != [i["text"] for i in fields["checklist"]]:
+                raise HTTPException(403, "You can only tick or untick checklist items")
+    else:
+        new_dept = fields["department_id"] if "department_id" in fields else previous.get("department_id")
+        new_business_id = fields.get("business_id", previous["business_id"])
+        if actor.get("role") == "admin":
+            allowed_departments = set(db.user_department_ids(str(actor["id"])))
+            if previous.get("department_id") not in allowed_departments:
+                raise HTTPException(403, "You can only manage tasks in your departments")
+            if new_dept not in allowed_departments:
+                raise HTTPException(403, "You can only manage tasks in your departments")
+        if (
+            actor.get("role") == "admin"
+            and new_business_id not in _visible_business_ids(actor)
+        ):
+            raise HTTPException(403, "You can only manage tasks for brands in your work areas")
+        if (
+            actor.get("role") == "admin"
+            and new_dept
+            and new_dept not in db.user_department_ids(str(actor["id"]))
+        ):
+            raise HTTPException(403, "You can only manage tasks in your departments")
+        new_ids = fields.get("assignee_ids")
+        if new_ids is None and "department_id" in fields:
+            new_ids = previous.get("assignee_ids", [])
+        if new_ids is not None:
+            fields["assignee_ids"] = _check_assignment(new_dept, new_ids)
+        fields.pop("owner", None)
+    updated = db.update_task(task_id, actor_user_id=str(actor["id"]), **fields)
+    if not updated:
+        raise HTTPException(404, "Task not found")
+
+    actor_id = str(actor["id"])
+    before = set(previous.get("assignee_ids", []))
+    after = set(updated.get("assignee_ids", []))
+    db.notify_task_event(task_id, "assignment", sorted(after - before), actor_id)
+    return updated
+
+
+
+
+def _report_window(start: str, end: str) -> tuple[str, str]:
+    try:
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(400, "start and end must be ISO timestamps") from e
+    if start_dt.tzinfo is None or end_dt.tzinfo is None:
+        raise HTTPException(400, "start and end must include a timezone")
+    if end_dt <= start_dt:
+        raise HTTPException(400, "end must be after start")
+    if (end_dt - start_dt).days > 62:
+        raise HTTPException(400, "Report range is limited to 62 days")
+    return (
+        start_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        end_dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
+
+@app.get("/api/time/report")
+def time_report(
+    request: Request,
+    start: str,
+    end: str,
+    user_id: Optional[str] = None,
+    department_id: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> dict[str, Any]:
+    actor = auth.require_user(request)
+    # Operators see only themselves; admins may inspect work within their departments.
+    target = user_id or str(actor["id"])
+    if actor.get("role") == "operator" and target != str(actor["id"]):
+        raise HTTPException(403, "You can only view your own time log")
+    if actor.get("role") == "admin":
+        allowed_departments = set(db.user_department_ids(str(actor["id"])))
+        if target == "all" or target != str(actor["id"]):
+            if not department_id or department_id not in allowed_departments:
+                raise HTTPException(403, "Choose one of your departments to view team time logs")
+        elif department_id and department_id != "none" and department_id not in allowed_departments:
+            raise HTTPException(403, "You can only view time logs in your departments")
+    start_s, end_s = _report_window(start, end)
+    return db.time_report(
+        start_s,
+        end_s,
+        user_id=None if target == "all" else target,
+        department_id=department_id,
+        status=status,
+        priority=priority,
+        viewer=actor,
+    )
+
+
+@app.get("/api/reports/overview")
+def reports_overview(
+    request: Request,
+    start: str,
+    end: str,
+    department_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    completion: Optional[str] = None,
+) -> dict[str, Any]:
+    actor = auth.require_user(request)
+    if completion not in (None, "", "completed", "pending"):
+        raise HTTPException(422, "completion must be completed or pending")
+    start_s, end_s = _report_window(start, end)
+    return db.reports_overview(
+        start_s,
+        end_s,
+        viewer=actor,
+        department_id=department_id or None,
+        user_id=user_id or None,
+        status=status or None,
+        priority=priority or None,
+        completion=completion or None,
+    )
+
+
+# ── Departments ─────────────────────────────────────────────
+
+
+@app.get("/api/departments")
+def list_departments(request: Request, include_inactive: bool = False) -> list[dict[str, Any]]:
+    user = auth.require_user(request)
+    include = include_inactive and auth.is_super_admin(user)
+    return db.list_departments(viewer=user, include_inactive=include)
+
+
+@app.post("/api/departments")
+def create_department(request: Request, body: DepartmentIn) -> dict[str, Any]:
+    auth.require_super_admin(request)
+    try:
+        return db.create_department(body.name, body.description, body.color, body.icon)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.patch("/api/departments/{department_id}")
+def patch_department(request: Request, department_id: str, body: DepartmentPatch) -> dict[str, Any]:
+    auth.require_super_admin(request)
+    if body.status is not None and body.status not in ("active", "inactive"):
+        raise HTTPException(422, "status must be active or inactive")
+    try:
+        updated = db.update_department(department_id, **body.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
     if not updated:
-        raise HTTPException(
-            404,
-            "Task not found",
-        )
-
-    if (
-        body.owner is not None
-        and previous
-        and body.owner.strip() != (previous.get("owner") or "").strip()
-    ):
-        db.create_task_assignment_notification(
-            task_id,
-            body.owner.strip(),
-            str(actor["id"]),
-        )
-
+        raise HTTPException(404, "Department not found")
     return updated
+
+
+@app.get("/api/departments/{department_id}/members")
+def department_members(request: Request, department_id: str) -> list[dict[str, Any]]:
+    user = auth.require_user(request)
+    if not db.get_department(department_id):
+        raise HTTPException(404, "Department not found")
+    if not auth.is_super_admin(user) and department_id not in db.user_department_ids(str(user["id"])):
+        raise HTTPException(403, "Not a member of this department")
+    return db.list_department_members(department_id)
+
+
+@app.post("/api/departments/{department_id}/members")
+def add_department_member(request: Request, department_id: str, body: DepartmentMemberIn) -> list[dict[str, Any]]:
+    actor = auth.require_super_admin(request)
+    if not db.get_department(department_id):
+        raise HTTPException(404, "Department not found")
+    target = db.get_user(body.user_id)
+    if not target or target.get("status") != "active":
+        raise HTTPException(400, "User not found or inactive")
+    db.add_department_member(department_id, body.user_id, str(actor["id"]))
+    return db.list_department_members(department_id)
+
+
+@app.delete("/api/departments/{department_id}/members/{user_id}")
+def remove_department_member(request: Request, department_id: str, user_id: str) -> list[dict[str, Any]]:
+    auth.require_super_admin(request)
+    if not db.get_department(department_id):
+        raise HTTPException(404, "Department not found")
+    db.remove_department_member(department_id, user_id)
+    return db.list_department_members(department_id)
 
 
 @app.get("/api/team/members")
 def team_members(request: Request) -> list[dict[str, str]]:
-    auth.require_user(request)
+    user = auth.require_user(request)
+    if auth.is_super_admin(user):
+        members = db.list_users(include_inactive=False)
+    else:
+        member_ids = {str(user["id"])}
+        for department_id in db.user_department_ids(str(user["id"])):
+            member_ids.update(
+                str(member["id"])
+                for member in db.list_department_members(department_id)
+                if member.get("status") == "active"
+            )
+        members = [
+            member for member in db.list_users(include_inactive=False)
+            if str(member["id"]) in member_ids
+        ]
     return [
         {
             "id": str(user["id"]),
             "username": str(user["username"]),
             "display_name": str(user.get("display_name") or user["username"]),
         }
-        for user in db.list_users(include_inactive=False)
+        for user in members
     ]
 
 
 @app.get("/api/tasks/{task_id}/comments")
 def task_comments(request: Request, task_id: str) -> list[dict[str, Any]]:
-    auth.require_user(request)
-    if not db.get_task(task_id):
-        raise HTTPException(404, "Task not found")
+    user = auth.require_user(request)
+    _visible_task(user, task_id)
+    db.mark_task_read(str(user["id"]), task_id)
     return db.list_task_comments(task_id)
 
 
@@ -1137,6 +1529,7 @@ def add_task_comment(
     body: TaskCommentIn,
 ) -> dict[str, Any]:
     user = auth.require_user(request)
+    _visible_task(user, task_id)
     content = body.content.strip()
     if not content:
         raise HTTPException(422, "Comment cannot be empty")
@@ -1161,14 +1554,30 @@ def add_task_comment(
 
 
 @app.get("/api/notifications")
-def notifications(request: Request) -> dict[str, Any]:
+def notifications(request: Request, filter: str = "all", limit: int = 50) -> dict[str, Any]:
     user = auth.require_user(request)
-    rows = db.list_notifications(str(user["id"]))
+    if filter not in ("all", "read", "unread"):
+        raise HTTPException(422, "filter must be all, read or unread")
+    rows = db.list_notifications(str(user["id"]), limit=limit, read_filter=filter)
     return {
         "items": rows,
         "unread_count": db.count_unread_notifications(str(user["id"])),
         "sound_enabled": db.notification_sound_enabled(str(user["id"])),
     }
+
+
+@app.post("/api/notifications/read-all")
+def read_all_notifications(request: Request) -> dict[str, Any]:
+    user = auth.require_user(request)
+    return {"ok": True, "updated": db.mark_all_notifications_read(str(user["id"]))}
+
+
+@app.post("/api/notifications/{notification_id}/unread")
+def unread_notification(request: Request, notification_id: str) -> dict[str, bool]:
+    user = auth.require_user(request)
+    if not db.mark_notification_unread(notification_id, str(user["id"])):
+        raise HTTPException(404, "Notification not found")
+    return {"ok": True}
 
 
 @app.post("/api/notifications/{notification_id}/read")
@@ -1195,16 +1604,20 @@ def set_notification_sound(
 
 @app.get("/api/approvals")
 def approvals(
+    request: Request,
     status: str = "pending",
 ) -> list[dict[str, Any]]:
+    auth.require_task_manager(request)
     return db.list_approvals(status)
 
 
 @app.post("/api/approvals/{approval_id}/decide")
 def decide(
+    request: Request,
     approval_id: str,
     body: ApprovalDecision,
 ) -> dict[str, Any]:
+    auth.require_task_manager(request)
     row = db.decide_approval(
         approval_id,
         body.approved,
@@ -1400,13 +1813,13 @@ class SlackMessageIn(BaseModel):
 
 @app.get("/api/slack/status")
 def slack_status(request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     return _slack().status(str(user["id"]))
 
 
 @app.get("/api/slack/auth")
 def slack_auth(request: Request):
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     try:
         return RedirectResponse(_slack().auth_url(str(user["id"])))
     except RuntimeError as e:
@@ -1415,7 +1828,7 @@ def slack_auth(request: Request):
 
 @app.get("/api/slack/file")
 def slack_file(request: Request, url: str, download: bool = False):
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     res = _slack_call(_slack().fetch_file, str(user["id"]), url)
     ctype = res.headers.get("content-type", "application/octet-stream")
     if ctype.startswith("text/html"):
@@ -1429,7 +1842,7 @@ def slack_file(request: Request, url: str, download: bool = False):
 
 @app.get("/api/slack/unread")
 def slack_unread(request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     uid = str(user["id"])
     items = _slack_call(_slack().unread, uid)
     for cid, info in items.items():
@@ -1463,26 +1876,26 @@ def slack_callback(
 
 @app.post("/api/slack/disconnect")
 def slack_disconnect(request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     _slack().disconnect(str(user["id"]))
     return {"ok": True, "connected": False}
 
 
 @app.get("/api/slack/conversations")
 def slack_conversations(request: Request) -> list[dict[str, Any]]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     return _slack_call(_slack().list_conversations, str(user["id"]))
 
 
 @app.get("/api/slack/messages")
 def slack_messages(request: Request, channel: str) -> list[dict[str, Any]]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     return _slack_call(_slack().list_messages, str(user["id"]), channel)
 
 
 @app.get("/api/slack/replies")
 def slack_replies(request: Request, channel: str, ts: str) -> list[dict[str, Any]]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     return _slack_call(_slack().list_replies, str(user["id"]), channel, ts)
 
 
@@ -1495,7 +1908,7 @@ class SlackReactionIn(BaseModel):
 
 @app.post("/api/slack/reactions")
 def slack_reaction(body: SlackReactionIn, request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     _slack_call(_slack().set_reaction, str(user["id"]), body.channel, body.ts, body.name, body.remove)
     return {"ok": True}
 
@@ -1511,7 +1924,7 @@ async def slack_upload(
     thread_ts: Optional[str] = Form(None, max_length=40),
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     content = await file.read(SLACK_MAX_UPLOAD + 1)
     if not content:
         raise HTTPException(400, "The file is empty.")
@@ -1525,7 +1938,7 @@ async def slack_upload(
 
 @app.post("/api/slack/messages")
 def slack_send(body: SlackMessageIn, request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
     return _slack_call(_slack().post_message, str(user["id"]), body.channel, body.text.strip(), body.thread_ts)
 
 
@@ -1536,7 +1949,7 @@ def slack_send(body: SlackMessageIn, request: Request) -> dict[str, Any]:
 def google_status(
     request: Request,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
 
     status = _google().connection_status(user["id"])
     from app.integrations.google_drive import verify_drive_access
@@ -1548,7 +1961,7 @@ def google_status(
 def google_auth(
     request: Request,
 ):
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
 
     try:
         return RedirectResponse(
@@ -1608,7 +2021,7 @@ def google_callback(
 def google_disconnect(
     request: Request,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
 
     _google().disconnect(
         user["id"]
@@ -1625,7 +2038,7 @@ def google_emails(
     request: Request,
     max_results: int = 15,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
 
     try:
         emails = _google().fetch_recent_emails(
@@ -1660,7 +2073,7 @@ def google_calendar(
     request: Request,
     days: int = 7,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
 
     try:
         return {
@@ -1688,7 +2101,7 @@ def google_drive(
     request: Request,
     max_results: int = 10,
 ) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
     from app.integrations.google_drive import fetch_recent_drive_files
     from googleapiclient.errors import HttpError
     import httplib2
@@ -1722,7 +2135,7 @@ def google_drive(
 
 @app.post("/api/google/drive/import")
 def import_google_drive_brands(request: Request) -> dict[str, Any]:
-    user = auth.require_user(request)
+    user = auth.require_super_admin(request)
     from app.integrations.google_drive import fetch_brand_drive_files
     from googleapiclient.errors import HttpError
     import httplib2
@@ -1895,7 +2308,7 @@ def ingest_proposals(
 ) -> dict[str, Any]:
     """Create draft follow-up tasks from email signals into the first business (demo hook)."""
 
-    user = auth.require_user(request)
+    user = auth.require_task_manager(request)
 
     try:
         emails = _google().fetch_recent_emails(
@@ -1912,7 +2325,11 @@ def ingest_proposals(
         emails
     )
 
-    businesses = db.list_businesses()
+    visible_business_ids = _visible_business_ids(user)
+    businesses = [
+        business for business in db.list_businesses()
+        if business["id"] in visible_business_ids
+    ]
 
     if not businesses:
         raise HTTPException(

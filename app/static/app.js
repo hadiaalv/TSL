@@ -6,10 +6,17 @@ let businessesCache = [];
 let boardTasks = [];
 let activeBoard = null;
 let teamMembers = [];
+let currentUserId = "";
+let currentCanManage = false;
+let currentCanManageTasks = false;
+let currentUserRole = "";
+let currentDepartmentIds = [];
+let timelogSummaryText = "";
 let notificationSeen = null;
 let notificationSoundEnabled = false;
 let notificationAudioReady = false;
 let upcomingEventsCache = [];
+let brandWorkloadCache = [];
 
 const SIDEBAR_STATE_KEY = "tsl.sidebar.collapsed";
 const SIDEBAR_SECTION_KEY = "tsl.sidebar.sections";
@@ -158,15 +165,60 @@ function initSidebarState() {
 }
 
 const PAGES = {
-  home: "Home", brands: "Brands", work: "Open Work", calendar: "Calendar",
-  ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Integrations",
+  home: "Overview", brands: "Brands", work: "Open Work", timelog: "Time Logs", calendar: "Calendar",
+  ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Settings",
+  workspace: "Tasks", notifications: "Notifications", reports: "Reports", deptmgmt: "Department Management",
 };
+
+function formatDuration(totalSeconds) {
+  const seconds = Math.max(0, Math.floor(totalSeconds || 0));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  if (h) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
+function parseUtc(value) {
+  return new Date(/(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`);
+}
+
+function taskTimerMarkup(task) {
+  const tracked = Number(task.tracked_seconds || 0);
+  if (!task.timer_started_at && !tracked) return "";
+  const running = Boolean(task.timer_started_at);
+  return `<span class="task-timer${running ? " running" : ""}" data-tracked="${tracked}"${running ? ` data-timer-start="${esc(task.timer_started_at)}"` : ""}>⏱ ${esc(formatDuration(tracked))}</span>`;
+}
+
+function tickTaskTimers() {
+  $$(".task-timer[data-timer-start]").forEach((el) => {
+    const started = parseUtc(el.dataset.timerStart).getTime();
+    if (Number.isNaN(started)) return;
+    const live = (Date.now() - started) / 1000;
+    el.textContent = `⏱ ${formatDuration(Number(el.dataset.tracked || 0) + live)}`;
+  });
+}
+
+setInterval(tickTaskTimers, 1000);
 
 function currentRoute() {
   const hash = (location.hash || "#home").replace(/^#/, "");
   if (hash.startsWith("brand/")) return { view: "brand", businessId: hash.slice(6) };
+  if (hash.startsWith("tasks/")) return { view: "workspace", scope: hash.slice(6), nav: hash };
+  if (hash.startsWith("dept/")) return { view: "workspace", scope: "dept", departmentId: hash.slice(5), nav: hash };
   if (PAGES[hash]) return { view: hash };
   return { view: "home" };
+}
+
+function routeAllowedForRole(route) {
+  if (!currentUserRole || currentUserRole === "super_admin") return true;
+  if (currentUserRole === "admin") return !["deptmgmt", "integrations"].includes(route.view);
+  if (route.view === "workspace") return true;
+  if (route.view === "brand") {
+    return businessesCache.some((business) => business.id === route.businessId);
+  }
+  return ["home", "brands", "work", "timelog", "notifications"].includes(route.view);
 }
 
 function setRoute(route, { replace = false } = {}) {
@@ -183,10 +235,11 @@ function applyRouteView(route) {
     $(`#${view}-view`)?.classList.toggle("hidden", route.view !== view);
   });
   $("#board-modal")?.classList.toggle("hidden", route.view !== "brand");
-  const navView = route.view === "brand" ? "brands" : route.view;
+  const navView = route.nav || (route.view === "brand" ? "brands" : route.view);
   $$("[data-route]").forEach((link) => link.classList.toggle("active", link.dataset.route === navView));
   const title = $("#page-title");
   if (title) title.textContent = route.view === "brand" ? (activeBoard?.name || "Brand") : PAGES[route.view];
+  $("#home-welcome")?.classList.toggle("hidden", route.view !== "home");
   document.body.classList.remove("mobile-sidebar-open");
   window.scrollTo(0, 0);
 }
@@ -196,10 +249,10 @@ function renderWorkSummary(brief) {
   const target = $("#work-summary");
   if (!target) return;
   target.innerHTML = `
-    <div class="summary-item"><strong>${summary.open_tasks || 0}</strong><span>Open tasks</span></div>
-    <div class="summary-item"><strong>${summary.overdue || 0}</strong><span>Overdue</span></div>
-    <div class="summary-item"><strong>${summary.due_today || 0}</strong><span>Due today</span></div>
-    <div class="summary-item"><strong>${summary.waiting_on || 0}</strong><span>Waiting on</span></div>
+    <div class="summary-item"><strong>${summary.pending_tasks || 0}</strong><span>Pending</span></div>
+    <div class="summary-item"><strong>${summary.in_progress_tasks || 0}</strong><span>In progress</span></div>
+    <div class="summary-item is-alert"><strong>${summary.overdue || 0}</strong><span>Overdue</span></div>
+    <div class="summary-item"><strong>${summary.completed_tasks || 0}</strong><span>Completed</span></div>
   `;
 }
 
@@ -301,6 +354,7 @@ function addBubble(role, text, tools) {
 
 async function refreshBrief() {
   const brief = await api("/api/brief");
+  brandWorkloadCache = brief.brand_workload || [];
   const s = brief.summary;
   const stats = $("#brief-stats");
   if (stats) {
@@ -317,6 +371,7 @@ async function refreshBrief() {
       .join("");
   }
   renderWorkSummary(brief);
+  renderBrandSurface();
 }
 
 function buildSidebarBusinessRows() {
@@ -344,12 +399,51 @@ function buildSidebarBusinessRows() {
 }
 
 function pendingCount(businessId) {
-  return (boardTasks || []).filter((t) => t.business_id === businessId && ["pending", "in_progress"].includes(t.status)).length;
+  return (boardTasks || []).filter(
+    (task) => task.business_id === businessId && !["done", "cancelled"].includes(task.status)
+  ).length;
+}
+
+function pendingTaskCounts() {
+  const counts = new Map();
+  (boardTasks || []).forEach((task) => {
+    if (!task.business_id || ["done", "cancelled"].includes(task.status)) return;
+    counts.set(task.business_id, (counts.get(task.business_id) || 0) + 1);
+  });
+  return counts;
 }
 
 function pendingBadge(businessId) {
   const n = pendingCount(businessId);
-  return n ? `<span class="pending-badge">${n} pending</span>` : "";
+  return n ? `<span class="pending-badge">${n} open</span>` : "";
+}
+
+function renderPendingBrandTiles(list, target, counts, workloadByBrand) {
+  if (!target) return;
+  target.innerHTML = list
+    .map((business) => {
+      const workload = workloadByBrand.get(business.id);
+      const open = counts.get(business.id) || 0;
+      const pending = workload ? workload.pending_tasks || 0 : 0;
+      return `
+        <article class="brand-tile pending-brand-tile" data-brand-card="${esc(business.id)}">
+          <button type="button" class="brand-open-card" data-brand-id="${esc(business.id)}">
+            <span class="brand-cover">${logoMarkup({ ...business, logo_url: business.logo_url || workload?.logo_url }, "brand-logo-lg")}</span>
+            <span class="pending-brand-copy">
+              <span class="brand-title">${esc(business.name)}</span>
+              <span class="pending-brand-metrics">
+                ${workload
+                  ? (pending ? `<span class="pending-badge">${pending} pending</span>` : "")
+                  : `<span class="pending-badge">${open} open</span>`}
+                ${workload?.in_progress_tasks ? `<span class="workload-badge in-progress">${workload.in_progress_tasks} in progress</span>` : ""}
+                ${workload?.overdue_tasks ? `<span class="workload-badge overdue">${workload.overdue_tasks} overdue</span>` : ""}
+                ${workload?.completed_tasks ? `<span class="workload-badge completed">${workload.completed_tasks} completed</span>` : ""}
+              </span>
+            </span>
+          </button>
+        </article>`;
+    })
+    .join("");
 }
 
 function renderBrandTiles(list, target) {
@@ -399,6 +493,8 @@ function attachBrandTileEvents(scope = document) {
 }
 
 function renderBrandSurface() {
+  const pendingCounts = pendingTaskCounts();
+  const workloadByBrand = new Map(brandWorkloadCache.map((workload) => [workload.id, workload]));
   const query = ($("#brand-search")?.value || "").trim().toLowerCase();
   const filtered = businessesCache.filter((business) => {
     if (!query) return true;
@@ -408,16 +504,42 @@ function renderBrandSurface() {
     );
   });
   const pendingBrands = businessesCache
-    .filter((business) => pendingCount(business.id) > 0)
-    .sort((x, y) => pendingCount(y.id) - pendingCount(x.id));
+    .filter((business) => {
+      const workload = workloadByBrand.get(business.id);
+      return workload
+        ? (workload.pending_tasks || 0) + (workload.in_progress_tasks || 0) > 0
+        : pendingCount(business.id) > 0;
+    })
+    .sort((x, y) => {
+      const xWorkload = workloadByBrand.get(x.id);
+      const yWorkload = workloadByBrand.get(y.id);
+      return (
+        (yWorkload?.overdue_tasks || 0) - (xWorkload?.overdue_tasks || 0)
+        || ((yWorkload?.pending_tasks || 0) + (yWorkload?.in_progress_tasks || 0))
+          - ((xWorkload?.pending_tasks || 0) + (xWorkload?.in_progress_tasks || 0))
+        || x.name.localeCompare(y.name, undefined, { sensitivity: "base" })
+      );
+    });
   const recent = businessesCache
     .filter((business) => business.last_visited_at)
     .sort((a, b) => String(b.last_visited_at || "").localeCompare(String(a.last_visited_at || "")))
     .slice(0, 8);
 
-  renderBrandTiles(pendingBrands, $("#pending-brands"));
+  renderPendingBrandTiles(pendingBrands, $("#pending-brands"), pendingCounts, workloadByBrand);
   const pendingSection = $("#pending-section");
   if (pendingSection) pendingSection.hidden = !pendingBrands.length;
+  const pendingTotal = $("#pending-total");
+  if (pendingTotal) {
+    const taskTotal = pendingBrands.reduce((total, business) => {
+      const workload = workloadByBrand.get(business.id);
+      return total + (
+        workload
+          ? (workload.pending_tasks || 0) + (workload.in_progress_tasks || 0)
+          : pendingCounts.get(business.id) || 0
+      );
+    }, 0);
+    pendingTotal.textContent = `${taskTotal} open ${taskTotal === 1 ? "task" : "tasks"}`;
+  }
   renderBrandTiles(recent, $("#recent-brands"));
 
   const allTarget = $("#all-brands");
@@ -435,10 +557,12 @@ function renderBrandSurface() {
           )
           .join("")
       : `<p class="muted">No matching brands found.</p>`;
-    allTarget.insertAdjacentHTML(
-      "beforeend",
-      `<article class="brand-tile add-brand-tile"><button id="add-brand-card" type="button">＋ Add brand</button></article>`
-    );
+    if (currentCanManage) {
+      allTarget.insertAdjacentHTML(
+        "beforeend",
+        `<article class="brand-tile add-brand-tile"><button id="add-brand-card" type="button">＋ Add brand</button></article>`
+      );
+    }
   }
 
   attachBrandTileEvents(document);
@@ -456,14 +580,12 @@ async function refreshBusinesses() {
 function renderTaskCard(task) {
   const status = String(task.status || "").toLowerCase();
   const statusLabel = status.replace(/[_-]/g, " ");
-  const priority = String(task.priority || "").toUpperCase();
   const due = task.deadline ? String(task.deadline).slice(0, 10) : "";
   const overdue = due && due < new Date().toISOString().slice(0, 10);
   const owner = task.owner_username || task.owner || "";
   return `<article class="card task-card ${esc(status)}${overdue ? " is-overdue" : ""}" data-task-id="${esc(task.id)}">
       <div class="task-card-top">
         <span class="task-brand">${esc(task.business_name)}</span>
-        ${priority ? `<span class="task-priority ${esc(priority.toLowerCase())}">${esc(priority)}</span>` : ""}
       </div>
       <div class="title">${esc(task.title)}</div>
       <div class="meta">
@@ -625,6 +747,7 @@ function renderBoardTask(task) {
       <span>${esc(task.category || "other")}</span>
       ${task.owner && task.owner !== "me" ? `<span>${esc(task.owner)}</span>` : ""}
       ${task.deadline ? `<span>Due ${esc(task.deadline.slice(0, 10))}</span>` : ""}
+      ${taskTimerMarkup(task)}
     </div>
     ${task.notes ? `<p class="muted">${esc(task.notes)}</p>` : ""}
     <label class="task-status-control">Status
@@ -799,7 +922,9 @@ async function openBoard(businessId, focusTaskId = "") {
   $("#board-brand-logo").innerHTML = logoMarkup(business, "brand-logo-header-mark");
   $("#board-status").textContent = "";
   await Promise.all([refreshTeamMembers(), loadBoard(business), refreshEvents()]);
-  await refreshBrandLinks();
+  setBrandTab("board");
+  resetSopForm();
+  await Promise.all([refreshBrandLinks(), refreshBrandSops()]);
 
   $$(".biz-open").forEach((button) => button.classList.toggle("active", button.dataset.id === business.id));
 
@@ -857,6 +982,92 @@ function bindBrandLinks() {
     if (!button || !activeBoard) return;
     await api(`/api/businesses/${encodeURIComponent(activeBoard.id)}/links/${encodeURIComponent(button.dataset.removeLink)}`, { method: "DELETE" });
     await refreshBrandLinks();
+  });
+}
+
+let brandSopsCache = [];
+let editingSopId = "";
+
+function setBrandTab(name) {
+  $$(".brand-tab").forEach((tab) => {
+    const on = tab.dataset.brandTab === name;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  $("#brand-tab-board")?.classList.toggle("hidden", name !== "board");
+  $("#brand-tab-sops")?.classList.toggle("hidden", name !== "sops");
+}
+
+function resetSopForm() {
+  editingSopId = "";
+  $("#brand-sop-form")?.reset();
+  $("#brand-sop-submit").textContent = "Add SOP";
+  $("#brand-sop-cancel").classList.add("hidden");
+}
+
+async function refreshBrandSops() {
+  const target = $("#brand-sops-list");
+  if (!target || !activeBoard) return;
+  brandSopsCache = await api(`/api/businesses/${encodeURIComponent(activeBoard.id)}/sops`);
+  const badge = $("#brand-sops-count");
+  if (badge) badge.textContent = String(brandSopsCache.length);
+  target.innerHTML = brandSopsCache.length
+    ? brandSopsCache
+        .map((sop) => {
+          const link = sop.url
+            ? `<a class="brand-sop-link" href="${esc(sop.url)}" target="_blank" rel="noopener noreferrer">🔗 Open document</a>`
+            : "";
+          const body = sop.content ? `<div class="brand-sop-body">${esc(sop.content)}</div>` : "";
+          const actions = currentCanManage
+            ? `<span><button type="button" class="text-link" data-edit-sop="${esc(sop.id)}">Edit</button><button type="button" class="text-link" data-delete-sop="${esc(sop.id)}">Delete</button></span>`
+            : "";
+          return `<article class="brand-sop-card"><div class="brand-sop-head"><strong>${esc(sop.title)}</strong>${actions}</div>${body}${link}</article>`;
+        })
+        .join("")
+    : `<p class="muted">${currentCanManage ? "No SOPs yet. Add the first one below." : "No SOPs available yet."}</p>`;
+}
+
+function bindBrandTabs() {
+  $$(".brand-tab").forEach((tab) => tab.addEventListener("click", () => setBrandTab(tab.dataset.brandTab)));
+  $("#brand-sop-cancel")?.addEventListener("click", resetSopForm);
+  $("#brand-sop-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!activeBoard) return;
+    const base = `/api/businesses/${encodeURIComponent(activeBoard.id)}/sops`;
+    const body = JSON.stringify({
+      title: $("#brand-sop-title").value,
+      content: $("#brand-sop-content").value,
+      url: $("#brand-sop-url").value,
+    });
+    try {
+      if (editingSopId) await api(`${base}/${encodeURIComponent(editingSopId)}`, { method: "PATCH", body });
+      else await api(base, { method: "POST", body });
+      resetSopForm();
+      await refreshBrandSops();
+    } catch (error) {
+      $("#board-status").textContent = `Could not save SOP: ${error.message}`;
+    }
+  });
+  $("#brand-sops-list")?.addEventListener("click", async (event) => {
+    if (!activeBoard) return;
+    const edit = event.target.closest("[data-edit-sop]");
+    const del = event.target.closest("[data-delete-sop]");
+    if (edit) {
+      const sop = brandSopsCache.find((item) => item.id === edit.dataset.editSop);
+      if (!sop) return;
+      editingSopId = sop.id;
+      $("#brand-sop-title").value = sop.title;
+      $("#brand-sop-content").value = sop.content || "";
+      $("#brand-sop-url").value = sop.url || "";
+      $("#brand-sop-submit").textContent = "Save SOP";
+      $("#brand-sop-cancel").classList.remove("hidden");
+      $("#brand-sop-title").focus();
+    } else if (del) {
+      if (!confirm("Delete this SOP?")) return;
+      await api(`/api/businesses/${encodeURIComponent(activeBoard.id)}/sops/${encodeURIComponent(del.dataset.deleteSop)}`, { method: "DELETE" });
+      if (editingSopId === del.dataset.deleteSop) resetSopForm();
+      await refreshBrandSops();
+    }
   });
 }
 
@@ -956,9 +1167,25 @@ function openEventModal(defaultBusinessId = "") {
   $("#event-modal").classList.remove("hidden");
 }
 
-function openTaskModal(defaultBusinessId = "") {
+async function openTaskModal(defaultBusinessId = "") {
   populateBrandSelects();
   if (defaultBusinessId) $("#quick-task-brand").value = defaultBusinessId;
+  const departmentLabel = $("#quick-task-department-label");
+  if (departmentLabel) departmentLabel.classList.toggle("hidden", !currentCanManageTasks);
+  if (currentCanManageTasks) {
+    const departments = await api("/api/departments");
+    const available = currentCanManage
+      ? departments
+      : departments.filter((department) => currentDepartmentIds.includes(department.id));
+    const departmentSelect = $("#quick-task-department");
+    if (departmentSelect) {
+      departmentSelect.innerHTML = [
+        ...(currentCanManage ? [`<option value="">No department</option>`] : [`<option value="">Choose a department</option>`]),
+        ...available.map((department) => `<option value="${esc(department.id)}">${esc(department.name)}</option>`),
+      ].join("");
+      departmentSelect.required = !currentCanManage;
+    }
+  }
   $("#quick-task-name").value = "";
   $("#quick-task-due").value = "";
   $("#quick-task-error").textContent = "";
@@ -1122,6 +1349,11 @@ async function refreshNotifications() {
     badge.textContent = String(data.unread_count || 0);
     badge.classList.toggle("hidden", !data.unread_count);
   }
+  const navBadge = $("#count-notifications");
+  if (navBadge) {
+    navBadge.textContent = String(data.unread_count || 0);
+    navBadge.classList.toggle("hidden", !data.unread_count);
+  }
   const list = $("#notification-list");
   if (!list) return;
   list.innerHTML = items.length
@@ -1147,10 +1379,8 @@ async function refreshNotifications() {
           setRoute("chat");
           $("#notification-panel")?.classList.add("hidden");
         } else if (taskMatch) {
-          const taskId = decodeURIComponent(taskMatch[1]);
-          const task = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
-          setRoute(`brand/${task.business_id}`);
-          await openBoard(task.business_id, taskId);
+          $("#notification-panel")?.classList.add("hidden");
+          await window.TSLWorkspace.openTask(decodeURIComponent(taskMatch[1]));
         }
       } catch (error) {
         setStatus(`Could not open notification: ${error.message}`);
@@ -1167,16 +1397,17 @@ async function refreshNotifications() {
 }
 
 async function refreshAll() {
-  await Promise.all([
+  const jobs = [
     refreshBrief(),
     refreshBusinesses(),
     refreshTasks(),
-    refreshApprovals(),
-    refreshGoogle(),
     refreshEvents(),
     refreshActivity(),
     refreshNotifications(),
-  ]);
+  ];
+  if (currentCanManage) jobs.push(refreshGoogle());
+  if (currentCanManageTasks) jobs.push(refreshApprovals());
+  await Promise.all(jobs);
 }
 
 async function sendMessage(text) {
@@ -1204,15 +1435,25 @@ async function sendMessage(text) {
 async function refreshSession() {
   try {
     const me = await api("/api/auth/me");
+    currentUserId = me.user?.id || "";
+    currentCanManage = Boolean(me.user?.can_manage_users);
+    currentCanManageTasks = Boolean(me.user?.can_manage_tasks);
+    currentUserRole = me.user?.role || "operator";
+    currentDepartmentIds = me.user?.department_ids || [];
+    $$(".sa-only").forEach((el) => el.classList.toggle("hidden", !currentCanManage));
+    $$(".admin-only").forEach((el) => el.classList.toggle("hidden", !currentCanManageTasks));
+    document.body.classList.toggle("is-operator", currentUserRole === "operator");
+    document.body.classList.toggle("not-sa", !currentCanManage);
+    document.body.classList.toggle("not-admin", !currentCanManageTasks);
     const label = me.user?.display_name || me.user?.username || "";
-    const role = me.user?.role ? ` · ${me.user.role}` : "";
+    const roleName = { super_admin: "Super Admin", admin: "Admin", operator: "Operator" }[currentUserRole];
+    const role = roleName ? ` · ${roleName}` : "";
     const el = $("#session-user");
     if (el) el.textContent = label + role;
-    const adminLink = $("#admin-link");
-    if (adminLink) {
-      if (me.user?.can_manage_users) adminLink.classList.remove("hidden");
-      else adminLink.classList.add("hidden");
-    }
+    const welcome = $("#home-welcome");
+    if (welcome) welcome.textContent = label ? `Welcome back, ${label}. Here’s your portfolio at a glance.` : "Your portfolio at a glance";
+    window.TSLWorkspace?.onSession(me.user);
+    renderBrandSurface();
   } catch {
     // redirect handled in api()
   }
@@ -1379,8 +1620,8 @@ function attachGlobalHandlers() {
     }
   });
 
-  $("#quick-add-task")?.addEventListener("click", () => openTaskModal());
-  $("#work-add-task")?.addEventListener("click", () => openTaskModal());
+  $("#quick-add-task")?.addEventListener("click", () => openTaskModal().catch((error) => setStatus(`Could not open task form: ${error.message}`)));
+  $("#work-add-task")?.addEventListener("click", () => openTaskModal().catch((error) => setStatus(`Could not open task form: ${error.message}`)));
   $("#quick-task-cancel")?.addEventListener("click", () => $("#quick-task-modal").classList.add("hidden"));
   $("#quick-task-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1394,6 +1635,7 @@ function attachGlobalHandlers() {
           business_id: $("#quick-task-brand").value,
           title: $("#quick-task-name").value.trim(),
           deadline: $("#quick-task-due").value || null,
+          department_id: $("#quick-task-department")?.value || null,
           status: "open",
           category: "other",
           owner: "me",
@@ -2057,11 +2299,79 @@ function bindSlackHandlers() {
   });
 }
 
+function localDateValue(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function formatClock(value) {
+  const date = parseUtc(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadTimeLog() {
+  const dateInput = $("#timelog-date");
+  const userSelect = $("#timelog-user");
+  if (!dateInput || !userSelect) return;
+  if (!dateInput.value) dateInput.value = localDateValue();
+  if (!userSelect.options.length) {
+    if (!teamMembers.length) teamMembers = await api("/api/team/members");
+    const people = currentCanManage ? teamMembers : teamMembers.filter((m) => m.id === currentUserId);
+    userSelect.innerHTML = (currentCanManage ? `<option value="all">Everyone</option>` : "") + people
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.display_name)}${m.id === currentUserId ? " (me)" : ""}</option>`)
+      .join("");
+    userSelect.value = currentUserId;
+    userSelect.disabled = !currentCanManage;
+  }
+  const [y, m, d] = dateInput.value.split("-").map(Number);
+  const dayStart = new Date(y, m - 1, d);
+  const dayEnd = new Date(y, m - 1, d + 1);
+  const report = await api(
+    `/api/time/report?start=${encodeURIComponent(dayStart.toISOString())}&end=${encodeURIComponent(dayEnd.toISOString())}&user_id=${encodeURIComponent(userSelect.value)}`
+  );
+  renderTimeLog(report);
+}
+
+function renderTimeLog(report) {
+  const userName = $("#timelog-user")?.selectedOptions[0]?.textContent.replace(" (me)", "") || "me";
+  const anyRunning = report.entries.some((e) => e.running);
+  $("#timelog-summary").innerHTML = `
+    <div class="summary-item"><strong>${esc(formatDuration(report.worked_seconds))}</strong><span>Time worked${anyRunning ? " (timer running)" : ""}</span></div>
+    <div class="summary-item"><strong>${report.tasks.length}</strong><span>Tasks worked on</span></div>
+    <div class="summary-item"><strong>${esc(formatDuration(report.total_seconds))}</strong><span>Total task time</span></div>`;
+  $("#timelog-tasks").innerHTML = report.tasks.length
+    ? `<table class="timelog-table"><thead><tr><th>Task</th><th>Brand</th><th>Who</th><th>Status</th><th>Time</th><th>Sessions</th></tr></thead><tbody>${report.tasks
+        .map(
+          (t) => `<tr><td>${esc(t.task_title)}${t.running ? ` <span class="task-timer running">running</span>` : ""}</td><td>${esc(t.business_name)}</td><td>${esc((t.people || []).join(", "))}</td><td>${esc(({ open: "To Do", in_progress: "In Progress", waiting_on: "Review", blocked: "Review", delegated: "In Progress", done: "Completed", cancelled: "Completed" })[t.task_status] || t.task_status)}</td><td><strong>${esc(formatDuration(t.seconds))}</strong></td><td>${t.sessions}</td></tr>`
+        )
+        .join("")}</tbody></table>`
+    : `<p class="muted">No time tracked on this day. Move a card to In Progress to start a timer.</p>`;
+  $("#timelog-entries").innerHTML = report.entries.length
+    ? report.entries
+        .map(
+          (e) => `<div class="timelog-entry"><span class="timelog-range">${esc(formatClock(e.started_at))} – ${e.running ? "now" : esc(formatClock(e.ended_at))}</span><span>${esc(e.task_title)} <span class="muted">· ${esc(e.business_name)} · ${esc(e.user_name)}</span></span><strong>${esc(formatDuration(e.seconds))}</strong></div>`
+        )
+        .join("")
+    : "";
+  const date = $("#timelog-date").value;
+  timelogSummaryText = [
+    `Work update for ${userName} on ${date}`,
+    `Time worked: ${formatDuration(report.worked_seconds)}`,
+    ...report.tasks.map((t) => `- ${t.task_title} (${t.business_name}${t.people?.length ? `, ${t.people.join(", ")}` : ""}): ${formatDuration(t.seconds)}`),
+  ].join("\n");
+}
+
 async function applyRoute() {
-  const route = currentRoute();
+  let route = currentRoute();
+  if (!routeAllowedForRole(route)) {
+    route = { view: "home" };
+    setRoute("home", { replace: true });
+  }
   applyRouteView(route);
+  if (route.view === "timelog") loadTimeLog().catch((error) => setStatus(error.message));
   if (route.view === "chat") initSlackView();
   else stopSlackPolling();
+  window.TSLWorkspace?.onRoute(route);
   if (route.view === "brand" && route.businessId) {
     await openBoard(route.businessId);
     applyRouteView(route);
@@ -2073,7 +2383,18 @@ async function initialize() {
   attachGlobalHandlers();
   bindSlackHandlers();
   bindBrandLinks();
+  bindBrandTabs();
   bindGlobalSearch();
+  $("#timelog-date")?.addEventListener("change", () => loadTimeLog().catch((error) => setStatus(error.message)));
+  $("#timelog-user")?.addEventListener("change", () => loadTimeLog().catch((error) => setStatus(error.message)));
+  $("#timelog-copy")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(timelogSummaryText);
+      setStatus("Summary copied.");
+    } catch {
+      setStatus("Could not copy summary.");
+    }
+  });
   window.addEventListener("hashchange", () => {
     applyRoute().catch((error) => setStatus(error.message));
   });
@@ -2086,7 +2407,8 @@ async function initialize() {
     }
   });
 
-  await Promise.all([refreshAll(), refreshSession()]);
+  await refreshSession();
+  await refreshAll();
   await applyRoute();
 
   if (new URLSearchParams(location.search).get("google") === "connected") {
@@ -2103,9 +2425,8 @@ async function initialize() {
   const linkedTaskId = new URLSearchParams(location.search).get("task");
   if (linkedTaskId) {
     try {
-      const task = await api(`/api/tasks/${encodeURIComponent(linkedTaskId)}`);
-      setRoute(`brand/${task.business_id}`, { replace: true });
-      await openBoard(task.business_id, linkedTaskId);
+      window.history.replaceState({}, "", location.pathname + (location.hash || "#home"));
+      await window.TSLWorkspace.openTask(linkedTaskId);
     } catch (error) {
       setStatus(`Could not open linked task: ${error.message}`);
     }
