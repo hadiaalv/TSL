@@ -28,10 +28,11 @@ async function api(path, opts = {}) {
   if (!isFormData && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
+  headers["ngrok-skip-browser-warning"] = "true";
   const res = await fetch(path, {
+    ...opts,
     headers,
     credentials: "same-origin",
-    ...opts,
   });
   if (res.status === 401) {
     window.location.href = "/login";

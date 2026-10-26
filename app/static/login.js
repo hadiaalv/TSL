@@ -9,7 +9,10 @@ form.addEventListener("submit", async (e) => {
   try {
     const res = await fetch("/api/auth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "ngrok-skip-browser-warning": "true",
+      },
       body: JSON.stringify({
         username: document.getElementById("username").value.trim(),
         password: document.getElementById("password").value,

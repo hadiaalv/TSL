@@ -1,8 +1,12 @@
 async function api(path, opts = {}) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
-    credentials: "same-origin",
     ...opts,
+    headers: {
+      "Content-Type": "application/json",
+      "ngrok-skip-browser-warning": "true",
+      ...(opts.headers || {}),
+    },
+    credentials: "same-origin",
   });
   if (res.status === 401) {
     window.location.href = "/login";

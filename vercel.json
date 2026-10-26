@@ -1,9 +1,5 @@
 {
   "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://eternal-rope-zen.ngrok-free.dev/api/:path*",
-      "requestHeaders": { "ngrok-skip-browser-warning": "true" }
-    }
+    { "source": "/api/:path*", "destination": "https://eternal-rope-zen.ngrok-free.dev/api/:path*" }
   ]
 }
