@@ -341,7 +341,21 @@
         return;
       }
     }
-    const view = task || { title: "", description: "", status: "open", deadline: "", assignees: [], assignee_ids: [], checklist: [], links: [], department_id: defaults.department_id || "", comment_count: 0 };
+    const defaultBusinessId = defaults.business_id || state.filters.business
+      || state.businesses.find((business) => business.slug === "general")?.id || "";
+    const view = task || {
+      title: "",
+      description: "",
+      status: "open",
+      deadline: "",
+      assignees: [],
+      assignee_ids: [],
+      checklist: [],
+      links: [],
+      business_id: defaultBusinessId,
+      department_id: defaults.department_id || "",
+      comment_count: 0,
+    };
     state.drawerTaskId = taskId || "";
     const draft = { assignee_ids: [...(view.assignee_ids || [])], checklist: (view.checklist || []).map((c) => ({ ...c })), links: (view.links || []).map((l) => ({ ...l })) };
     const isAssignee = task && (task.assignee_ids || []).includes(state.me.id);
@@ -385,7 +399,7 @@
           </select></div>
           ${task ? `<div class="td-field"><span>Brand</span><strong class="td-brand-name">${esc(view.business_name || "General")}</strong></div>` : ""}
           <div class="td-field"><span>Due date</span><input type="date" name="deadline" form="drawer-form" value="${esc(fmtDate(view.deadline))}" ${canEdit ? "" : "disabled"} /></div>
-          ${canEdit && !task ? `<div class="td-field"><span>Brand</span><select name="business_id" form="drawer-form"><option value="">General</option>${state.businesses.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}</select></div>` : ""}
+          ${canEdit && !task ? `<div class="td-field"><span>Brand</span><select name="business_id" form="drawer-form" required>${state.businesses.map((b) => `<option value="${esc(b.id)}"${view.business_id === b.id ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></div>` : ""}
           ${canEdit && !task ? `<label class="td-field"><span>Approver</span><input name="approver_name" form="drawer-form" maxlength="160" placeholder="CEO, client, etc. (optional)" /></label>` : ""}
           ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>` : ""}
         </aside>`;

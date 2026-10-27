@@ -357,7 +357,7 @@
 }
 
 .user-row {
-  grid-template-columns: 1.3fr .9fr .8fr 1fr auto;
+  grid-template-columns: 1.2fr .9fr .8fr 1fr .9fr auto;
 }
 
 .data-row.biz { grid-template-columns: 1.4fr 1fr .6fr; }
@@ -365,7 +365,9 @@
 .data-row.approval { grid-template-columns: 1.4fr 1fr auto; }
 .data-row.google { grid-template-columns: 1.1fr 1.2fr .9fr .9fr; }
 
-.user-row select {
+.user-row select,
+.user-row input {
+  min-width: 0;
   font-family: inherit;
   font-size: .8rem;
   color: var(--ink);

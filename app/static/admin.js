@@ -141,9 +141,9 @@ function renderUsers(users) {
         : `<span class="badge off">Google off</span>`;
       const statusCls = u.status === "active" ? "on" : "off";
       return `<div class="user-row" data-id="${escapeHtml(u.id)}">
-        <div>
+        <div class="user-ident">
           <div class="row-title">${escapeHtml(u.username)}</div>
-          <div class="row-sub">${escapeHtml(u.display_name || "")}</div>
+          <input data-field="display_name" maxlength="120" value="${escapeHtml(u.display_name || "")}" aria-label="Display name" />
         </div>
         <select data-field="role">
           ${["operator", "admin", "super_admin"]
@@ -152,8 +152,9 @@ function renderUsers(users) {
         </select>
         <select data-field="status">
           <option value="active" ${u.status === "active" ? "selected" : ""}>active</option>
-          <option value="disabled" ${u.status === "disabled" ? "selected" : ""}>disabled</option>
+          <option value="disabled" ${u.status === "disabled" ? "selected" : ""}>deactivated</option>
         </select>
+        <input data-field="password" type="password" minlength="8" autocomplete="new-password" placeholder="New password (optional)" aria-label="Set a new password" />
         <div><span class="badge ${statusCls}">${escapeHtml(u.status)}</span>${google}</div>
         <div><button type="button" class="ghost save-btn" data-save>Save</button></div>
       </div>`;
@@ -166,10 +167,12 @@ function renderUsers(users) {
       const id = row.dataset.id;
       const role = row.querySelector('[data-field="role"]').value;
       const status = row.querySelector('[data-field="status"]').value;
+      const display_name = row.querySelector('[data-field="display_name"]').value.trim();
+      const password = row.querySelector('[data-field="password"]').value;
       try {
         await api(`/api/admin/users/${id}`, {
           method: "PATCH",
-          body: JSON.stringify({ role, status }),
+          body: JSON.stringify({ role, status, display_name, ...(password ? { password } : {}) }),
         });
         await refresh();
       } catch (e) {

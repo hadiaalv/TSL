@@ -1574,7 +1574,7 @@ function attachGlobalHandlers() {
           title: $("#board-task-title").value.trim(),
           owner: $("#board-task-owner").value,
           deadline: $("#board-task-due").value || null,
-          category: $("#board-task-category").value,
+          category: $("#board-task-category").value || "other",
           status: "open",
           source: "board",
           approver_name: $("#board-task-approver").value.trim(),
