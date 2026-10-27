@@ -30,7 +30,7 @@
     members: [],
     businesses: [],
     route: null,
-    filters: { department: "", assignee: "", text: "" },
+    filters: { department: "", assignee: "", business: "", text: "" },
     tasks: [],
     notifFilter: "all",
     drawerTaskId: null,
@@ -106,6 +106,12 @@
     try {
       state.members = await api("/api/team/members");
     } catch { state.members = []; }
+    try {
+      state.businesses = await api("/api/businesses");
+    } catch (error) {
+      state.businesses = [];
+      toast(`Could not load brands: ${error.message}`);
+    }
     if (state.route) onRoute(state.route);
   }
 
@@ -144,6 +150,7 @@
       if (route.scope === "completed") p.set("open_only", "false");
       if (f.department) p.set("department_id", f.department);
     }
+    if (f.business) p.set("business_id", f.business);
     if (f.assignee && state.canManageTasks) p.set("assignee_id", f.assignee);
     return p.toString();
   }
@@ -169,13 +176,14 @@
       <div class="ws-chips">${chips}</div>
       <div class="ws-filters">
         <input type="search" id="ws-text" placeholder="Filter by title…" value="${esc(f.text)}" aria-label="Filter by title" />
+        <select id="ws-business" aria-label="Brand"><option value="">All brands</option>${state.businesses.map((b) => `<option value="${esc(b.id)}"${f.business === b.id ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
         ${isDept ? "" : `<select id="ws-dept" aria-label="Department"><option value="">All departments</option>${state.departments.map((d) => `<option value="${esc(d.id)}"${f.department === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select>`}
         ${state.canManageTasks ? `<select id="ws-assignee" aria-label="Assignee"><option value="">Anyone</option>${state.members.map((m) => `<option value="${esc(m.id)}"${f.assignee === m.id ? " selected" : ""}>${esc(m.display_name)}</option>`).join("")}</select>` : ""}
       </div>
       <div id="ws-board" class="ws-board" aria-live="polite"><p class="muted">Loading tasks…</p></div>`;
     $("#ws-new-task")?.addEventListener("click", () => openTask(null, { department_id: isDept ? route.departmentId : "" }));
     $("#ws-text").addEventListener("input", (e) => { state.filters.text = e.target.value; paintBoard(); });
-    ["ws-dept:department", "ws-assignee:assignee"].forEach((pair) => {
+    ["ws-business:business", "ws-dept:department", "ws-assignee:assignee"].forEach((pair) => {
       const [id, key] = pair.split(":");
       $(`#${id}`)?.addEventListener("change", (e) => { state.filters[key] = e.target.value; renderWorkspace(); });
     });
@@ -195,7 +203,10 @@
     const overdue = t.deadline && fmtDate(t.deadline) < today() && !["done", "cancelled"].includes(t.status);
     const canMove = state.canManageTasks || (t.assignee_ids || []).includes(state.me?.id);
     return `<article class="ws-card" draggable="${canMove}" tabindex="0" data-id="${esc(t.id)}" data-status="${esc(t.status)}">
-      <div class="ws-card-top">${deptChip(t.department_id, t.department_name, t.department_color)}</div>
+      <div class="ws-card-top">${deptChip(t.department_id, t.department_name, t.department_color)}
+        <span class="brand-chip">${esc(t.business_name || "General")}</span>
+        ${["P0", "P1"].includes(t.priority) ? `<span class="priority-pill priority-${esc(t.priority.toLowerCase())}">${esc(t.priority)}</span>` : ""}
+      </div>
       <h4>${esc(t.title)}</h4>
       <div class="ws-card-meta">
         ${avatars}
@@ -311,6 +322,7 @@
       const assignBlock = canEdit
         ? (view.department_id
           ? `<details class="assign-pop"${assignOpen ? " open" : ""}><summary>＋ Assign people</summary>
+              <p class="assign-brand">For brand: <strong>${esc(view.business_name || (state.businesses.find((b) => b.id === view.business_id)?.name) || "General")}</strong></p>
               <div class="assign-list">${activeMembers.map((m) => `<label><input type="checkbox" data-assign="${esc(m.id)}" ${draft.assignee_ids.includes(m.id) ? "checked" : ""} /> <span class="avatar">${esc(initials(m.display_name))}</span> ${esc(m.display_name)}</label>`).join("") || `<p class="muted">No members in this department yet. Add people in Department Management.</p>`}</div>
             </details>`
           : `<p class="muted">Choose a department first.</p>`)
@@ -329,6 +341,7 @@
               : `<option value="">— None —</option>`}
             ${state.departments.map((d) => `<option value="${esc(d.id)}"${view.department_id === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}
           </select></div>
+          ${task ? `<div class="td-field"><span>Brand</span><strong class="td-brand-name">${esc(view.business_name || "General")}</strong></div>` : ""}
           <div class="td-field"><span>Due date</span><input type="date" name="deadline" form="drawer-form" value="${esc(fmtDate(view.deadline))}" ${canEdit ? "" : "disabled"} /></div>
           ${canEdit && !task ? `<div class="td-field"><span>Brand</span><select name="business_id" form="drawer-form"><option value="">General</option>${state.businesses.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}</select></div>` : ""}
           ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>` : ""}

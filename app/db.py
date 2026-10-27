@@ -2304,10 +2304,11 @@ def notify_task_event(
         return 0
     actor = get_user(actor_user_id) if actor_user_id else None
     actor_name = (actor.get("display_name") or actor["username"]) if actor else "Someone"
+    business_name = task.get("business_name") or "General"
     title = (
-        f"{actor_name} requested your review: {task['title']}"
+        f"{actor_name} requested your review: {task['title']} · {business_name}"
         if event_type == "review"
-        else f"{actor_name} assigned you: {task['title']}"
+        else f"{actor_name} assigned you: {task['title']} · {business_name}"
     )
     now = _now()
     sent = 0

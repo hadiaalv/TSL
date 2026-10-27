@@ -64,6 +64,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             self.author_client.get("/api/notifications").json()["unread_count"],
             0,
         )
+        self.assertIn(self.business["name"], recipient_notifications["items"][0]["title"])
 
         self.assertEqual(
             self.recipient_client.get("/api/notifications").json()["unread_count"],
@@ -150,6 +151,22 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             json={"assignee_ids": [self.recipient["id"]]},
         )
         self.assertEqual(assigned.status_code, 200)
+        notifications = self.recipient_client.get("/api/notifications").json()
+        self.assertEqual(notifications["unread_count"], 1)
+        self.assertEqual(notifications["items"][0]["notification_type"], "review")
+
+    def test_creating_task_in_review_notifies_assigned_reviewer(self):
+        created = self.author_client.post(
+            "/api/tasks",
+            json={
+                "business_id": self.business["id"],
+                "title": "Check final artwork",
+                "assignee_ids": [self.recipient["id"]],
+                "department_id": self.department["id"],
+                "status": "waiting_on",
+            },
+        )
+        self.assertEqual(created.status_code, 200)
         notifications = self.recipient_client.get("/api/notifications").json()
         self.assertEqual(notifications["unread_count"], 1)
         self.assertEqual(notifications["items"][0]["notification_type"], "review")

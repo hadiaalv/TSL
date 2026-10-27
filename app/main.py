@@ -1278,7 +1278,8 @@ def create_task(
         fields["notes"] = description
     fields.pop("owner", None)
     task = db.create_task(**fields, actor_user_id=str(actor["id"]))
-    db.notify_task_event(task["id"], "assignment", assignee_ids, str(actor["id"]))
+    event_type = "review" if task.get("status") == "waiting_on" else "assignment"
+    db.notify_task_event(task["id"], event_type, assignee_ids, str(actor["id"]))
     return db.get_task(task["id"]) or task
 
 
