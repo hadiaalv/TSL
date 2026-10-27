@@ -64,8 +64,6 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             self.author_client.get("/api/notifications").json()["unread_count"],
             0,
         )
-        self.assertIn(self.business["name"], recipient_notifications["items"][0]["title"])
-
         self.assertEqual(
             self.recipient_client.get("/api/notifications").json()["unread_count"],
             0,
@@ -84,6 +82,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             self.author_client.get("/api/notifications").json()["unread_count"],
             0,
         )
+        self.assertIn(self.business["name"], recipient_notifications["items"][0]["title"])
 
         updated_board = self.author_client.patch(
             f"/api/businesses/{self.business['id']}",
@@ -134,6 +133,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             item for item in notifications["items"] if item["notification_type"] == "review"
         )
         self.assertIn("requested your review", review_notification["title"])
+        self.assertIn(self.business["name"], review_notification["title"])
         self.assertEqual(review_notification["task_id"], self.task["id"])
 
         completed = self.recipient_client.patch(

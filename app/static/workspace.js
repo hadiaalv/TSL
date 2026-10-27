@@ -443,6 +443,11 @@
         await loadDeptMembers(view.department_id);
         paint();
       });
+      document.querySelector("#task-drawer-panel [name=business_id]")?.addEventListener("change", (e) => {
+        view.business_id = e.target.value;
+        view.business_name = state.businesses.find((business) => business.id === view.business_id)?.name || "General";
+        paint();
+      });
       document.querySelector(".assign-pop")?.addEventListener("toggle", (e) => { assignOpen = e.target.open; });
       const changeAssignees = (ids) => {
         syncView();
