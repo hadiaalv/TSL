@@ -29,6 +29,7 @@
     departments: [],
     members: [],
     businesses: [],
+    reminderShown: false,
     route: null,
     filters: { department: "", assignee: "", business: "", text: "" },
     tasks: [],
@@ -37,6 +38,8 @@
   };
 
   const deptById = (id) => state.departments.find((d) => d.id === id);
+  const canManageDepartment = (id) => state.isSA || Boolean(id && state.departmentIds.includes(id));
+  const canManageTask = (task) => state.isSA || (state.canManageTasks && canManageDepartment(task.department_id));
   const initials = (name) => String(name || "?").trim().split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   const today = () => new Date().toISOString().slice(0, 10);
   const fmtDate = (value) => (value ? String(value).slice(0, 10) : "");
@@ -56,10 +59,7 @@
   // ── Sidebar ───────────────────────────────────────────────
   async function loadDepartments() {
     try {
-      const departments = await api("/api/departments");
-      state.departments = state.isSA
-        ? departments
-        : departments.filter((department) => state.departmentIds.includes(department.id));
+      state.departments = await api("/api/departments");
     } catch (error) {
       state.departments = [];
       toast(error.message);
@@ -113,6 +113,28 @@
       toast(`Could not load brands: ${error.message}`);
     }
     if (state.route) onRoute(state.route);
+    showPendingTaskReminder().catch((error) => toast(`Could not load pending-task reminders: ${error.message}`));
+  }
+
+  async function showPendingTaskReminder() {
+    if (state.reminderShown) return;
+    state.reminderShown = true;
+    const tasks = await api("/api/tasks?view=mine&limit=500");
+    if (!tasks.length) return;
+    const modal = $("#pending-task-reminder");
+    const list = $("#pending-task-reminder-list");
+    if (!modal || !list) return;
+    list.innerHTML = tasks.map((task) => `
+      <li><button type="button" data-reminder-task="${esc(task.id)}">
+        <strong>${esc(task.title)}</strong>
+        <span>${esc(task.business_name || "General")} · ${esc(task.department_name || "No department")} · ${esc(STATUS_LABEL[task.status] || task.status)}</span>
+      </button></li>`).join("");
+    modal.classList.remove("hidden");
+    $("#pending-task-reminder-close").addEventListener("click", () => modal.classList.add("hidden"), { once: true });
+    list.querySelectorAll("[data-reminder-task]").forEach((button) => button.addEventListener("click", () => {
+      modal.classList.add("hidden");
+      openTask(button.dataset.reminderTask);
+    }));
   }
 
   $("#departments-toggle")?.addEventListener("click", (event) => {
@@ -171,7 +193,7 @@
           <h2>${esc(isDept ? (dept?.name || "Department") : SCOPES[route.scope] || "Tasks")}</h2>
           ${dept?.description ? `<p class="muted">${esc(dept.description)}</p>` : ""}
         </div>
-        ${state.canManageTasks ? `<button type="button" class="primary-action" id="ws-new-task">+ New task</button>` : ""}
+        ${state.canManageTasks && (!isDept || canManageDepartment(route.departmentId)) ? `<button type="button" class="primary-action" id="ws-new-task">+ New task</button>` : ""}
       </div>
       <div class="ws-chips">${chips}</div>
       <div class="ws-filters">
@@ -202,7 +224,9 @@
       ? `<span class="avatars">${names.slice(0, 3).map((a) => `<span class="avatar" title="${esc(a.display_name)}">${esc(initials(a.display_name))}</span>`).join("")}${names.length > 3 ? `<span class="avatar more">+${names.length - 3}</span>` : ""}</span>`
       : `<span class="muted unassigned-tag">Unassigned</span>`;
     const overdue = t.deadline && fmtDate(t.deadline) < today() && !["done", "cancelled"].includes(t.status);
-    const canMove = state.canManageTasks || (t.assignee_ids || []).includes(state.me?.id);
+    const canMove = state.canManageTasks
+      ? canManageTask(t)
+      : (t.assignee_ids || []).includes(state.me?.id);
     return `<article class="ws-card" draggable="${canMove}" tabindex="0" data-id="${esc(t.id)}" data-status="${esc(t.status)}">
       <div class="ws-card-top">${deptChip(t.department_id, t.department_name, t.department_color)}
         <span class="brand-chip"><span class="brand-chip-label">Brand:</span> ${esc(businessName)}</span>
@@ -223,13 +247,19 @@
     if (!board) return;
     const text = state.filters.text.trim().toLowerCase();
     const list = state.tasks.filter((t) => !text || t.title.toLowerCase().includes(text));
-    const canQuickAdd = state.canManageTasks && state.route?.scope === "dept";
+    const canQuickAdd = state.canManageTasks
+      && state.route?.scope === "dept"
+      && canManageDepartment(state.route.departmentId);
     board.innerHTML = COLUMNS.map((col) => {
       const items = list.filter((t) => col.statuses.includes(t.status));
       return `<section class="ws-col" data-drop="${col.drop}" aria-label="${col.label}">
         <header><h3>${col.label}</h3><span class="count-badge">${items.length}</span></header>
         <div class="ws-col-body">${items.map(cardMarkup).join("") || `<p class="muted ws-empty">No tasks</p>`}</div>
-        ${canQuickAdd ? `<form class="ws-quick-add" data-status="${col.drop}"><input name="title" maxlength="300" placeholder="＋ Add a task" aria-label="Add a task to ${col.label}" autocomplete="off" /></form>` : ""}
+        ${canQuickAdd ? `<form class="ws-quick-add" data-status="${col.drop}">
+          <input name="title" maxlength="300" placeholder="＋ Add a task" aria-label="Add a task to ${col.label}" autocomplete="off" />
+          <select name="business_id" aria-label="Brand" required>${state.businesses.map((business) => `<option value="${esc(business.id)}"${business.id === (state.filters.business || state.businesses.find((item) => item.slug === "general")?.id || state.businesses[0]?.id) ? " selected" : ""}>${esc(business.name)}</option>`).join("")}</select>
+          <input name="approver_name" maxlength="160" placeholder="Approver (optional)" aria-label="External approver" />
+        </form>` : ""}
       </section>`;
     }).join("");
     board.querySelectorAll(".ws-quick-add").forEach((form) => form.addEventListener("submit", async (e) => {
@@ -238,7 +268,13 @@
       if (!title) return;
       form.title.disabled = true;
       try {
-        await api("/api/tasks", json("POST", { title, status: form.dataset.status, department_id: state.route.departmentId }));
+        await api("/api/tasks", json("POST", {
+          title,
+          status: form.dataset.status,
+          department_id: state.route.departmentId,
+          business_id: form.elements.business_id.value,
+          approver_name: form.elements.approver_name.value.trim(),
+        }));
         await renderWorkspace();
         loadDepartments();
         toast("Task added — open it to assign people");
@@ -261,7 +297,10 @@
         const id = e.dataTransfer.getData("text/plain");
         const task = state.tasks.find((t) => t.id === id);
         const column = COLUMNS.find((c) => c.drop === col.dataset.drop);
-        if (!task || !column || (!state.canManageTasks && !(task.assignee_ids || []).includes(state.me?.id)) || column.statuses.includes(task.status)) return;
+        const canUpdateStatus = task && (state.canManageTasks
+          ? canManageTask(task)
+          : (task.assignee_ids || []).includes(state.me?.id));
+        if (!task || !column || !canUpdateStatus || column.statuses.includes(task.status)) return;
         try {
           await api(`/api/tasks/${encodeURIComponent(id)}`, json("PATCH", { status: col.dataset.drop }));
           await renderWorkspace();
@@ -306,8 +345,10 @@
     state.drawerTaskId = taskId || "";
     const draft = { assignee_ids: [...(view.assignee_ids || [])], checklist: (view.checklist || []).map((c) => ({ ...c })), links: (view.links || []).map((l) => ({ ...l })) };
     const isAssignee = task && (task.assignee_ids || []).includes(state.me.id);
-    const canEdit = state.canManageTasks;
-    const canStatus = state.canManageTasks || isAssignee;
+    const canEdit = task ? canManageTask(task) : state.canManageTasks;
+    const canStatus = task
+      ? (state.canManageTasks ? canManageTask(task) : isAssignee)
+      : state.canManageTasks;
     const loadDeptMembers = async (deptId) => {
       if (!deptId || !state.canManageTasks) { deptMembers = []; return; }
       try { deptMembers = await api(`/api/departments/${encodeURIComponent(deptId)}/members`); } catch { deptMembers = []; }
@@ -340,11 +381,12 @@
             ${!task && state.me?.role === "admin"
               ? `<option value="" disabled${view.department_id ? "" : " selected"}>Choose a department</option>`
               : `<option value="">— None —</option>`}
-            ${state.departments.map((d) => `<option value="${esc(d.id)}"${view.department_id === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}
+            ${state.departments.filter((d) => !canEdit || canManageDepartment(d.id)).map((d) => `<option value="${esc(d.id)}"${view.department_id === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}
           </select></div>
           ${task ? `<div class="td-field"><span>Brand</span><strong class="td-brand-name">${esc(view.business_name || "General")}</strong></div>` : ""}
           <div class="td-field"><span>Due date</span><input type="date" name="deadline" form="drawer-form" value="${esc(fmtDate(view.deadline))}" ${canEdit ? "" : "disabled"} /></div>
           ${canEdit && !task ? `<div class="td-field"><span>Brand</span><select name="business_id" form="drawer-form"><option value="">General</option>${state.businesses.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}</select></div>` : ""}
+          ${canEdit && !task ? `<label class="td-field"><span>Approver</span><input name="approver_name" form="drawer-form" maxlength="160" placeholder="CEO, client, etc. (optional)" /></label>` : ""}
           ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>` : ""}
         </aside>`;
       panel.innerHTML = `
@@ -499,7 +541,11 @@
         const body = collect();
         try {
           const fd = new FormData(form);
-          await api("/api/tasks", json("POST", { ...body, business_id: fd.get("business_id") || null }));
+          await api("/api/tasks", json("POST", {
+            ...body,
+            business_id: fd.get("business_id") || null,
+            approver_name: fd.get("approver_name") || "",
+          }));
           closeDrawer();
           afterChange();
         } catch (error) {
@@ -607,6 +653,10 @@
   function renderReports() {
     const root = $("#reports-root");
     if (!root) return;
+    if (!state.isSA) {
+      root.innerHTML = `<p class="form-error">Super admin access required.</p>`;
+      return;
+    }
     const end = new Date();
     const start = new Date(Date.now() - 6 * 86400000);
     const iso = (d) => d.toISOString().slice(0, 10);

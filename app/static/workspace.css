@@ -170,6 +170,10 @@ body.drawer-open { overflow: hidden; }
 .ws-quick-add { padding: 6px; }
 .ws-quick-add input { width: 100%; font: inherit; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; background: transparent; }
 .ws-quick-add input:focus { background: var(--bg-elev); border-style: solid; }
+.ws-quick-add select { width: 100%; font: inherit; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: var(--bg-elev); }
+.pending-task-reminder-list { max-height: 50vh; overflow-y: auto; padding-left: 0; list-style: none; display: grid; gap: 8px; }
+.pending-task-reminder-list button { width: 100%; display: grid; gap: 3px; text-align: left; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--bg-elev); color: var(--ink); cursor: pointer; }
+.pending-task-reminder-list button span { color: var(--muted); font-size: .82rem; }
 @media (max-width: 820px) { .td-layout { grid-template-columns: 1fr; } .td-side { position: static; order: -1; } }
 @media (max-width: 1100px) { .ws-board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 680px) {

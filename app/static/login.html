@@ -33,7 +33,10 @@
         </label>
         <label>
           Password
-          <input id="password" name="password" type="password" required autocomplete="current-password" />
+          <span class="login-pw-wrap">
+            <input id="password" name="password" type="password" required autocomplete="current-password" />
+            <button type="button" class="login-pw-toggle" aria-label="Show password" aria-pressed="false">Show</button>
+          </span>
         </label>
         <button type="submit" id="login-btn">Sign in</button>
         <p id="login-error" class="login-error" hidden></p>

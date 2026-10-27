@@ -315,7 +315,7 @@ class DepartmentWorkspaceTests(unittest.TestCase):
             "/api/reports/overview", params={**params, "department_id": self.design["id"]}
         ).json()
         self.assertEqual(scoped["totals"]["tasks"], 0)
-        self.assertEqual(self.cy_c.get("/api/reports/overview", params=params).json()["totals"]["tasks"], 0)
+        self.assertEqual(self.cy_c.get("/api/reports/overview", params=params).status_code, 403)
 
     def test_links_must_be_http_and_checklist_progress_only_for_assignees(self):
         bad = self.sa.post(

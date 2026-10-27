@@ -1577,10 +1577,15 @@ function attachGlobalHandlers() {
           category: $("#board-task-category").value,
           status: "open",
           source: "board",
+          approver_name: $("#board-task-approver").value.trim(),
         }),
       });
       $("#board-task-title").value = "";
       $("#board-task-due").value = "";
+      $("#board-task-approver").value = "";
+      if (!$("#board-task-category").value) {
+        $("#board-task-category").value = "other";
+      }
       $("#board-status").textContent = "";
       await Promise.all([refreshTasks(), refreshBrief(), refreshActivity()]);
       await openBoard(activeBoard.id);
@@ -1641,10 +1646,12 @@ function attachGlobalHandlers() {
           category: "other",
           owner: "me",
           source: "manual",
+          approver_name: $("#quick-task-approver").value.trim(),
         }),
       });
       $("#quick-task-modal").classList.add("hidden");
       await Promise.all([refreshTasks(), refreshBrief(), refreshActivity()]);
+      $("#quick-task-approver").value = "";
     } catch (error) {
       $("#quick-task-error").textContent = error.message;
     } finally {

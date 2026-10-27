@@ -76,6 +76,32 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
+.login-pw-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: .45rem;
+}
+
+.login-pw-wrap input {
+  min-width: 0;
+  flex: 1;
+}
+
+.login-pw-toggle {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 .75rem;
+  color: var(--ink);
+  background: var(--bg-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.login-pw-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .login-form button[type="submit"] {
   margin-top: .25rem;
   font-family: inherit;

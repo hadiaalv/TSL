@@ -41,12 +41,12 @@
         <a href="#tasks/mine" data-route="tasks/mine" class="sidebar-nav-link"><span aria-hidden="true">☺</span><span>My Tasks</span><em id="count-mine" class="count-badge hidden">0</em></a>
         <a href="#tasks/all" data-route="tasks/all" class="sidebar-nav-link"><span aria-hidden="true">✓</span><span>All Tasks</span><em id="open-work-count" class="count-badge">0</em></a>
         <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span aria-hidden="true">♧</span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
-        <div class="nav-group admin-only hidden" id="nav-departments">
+        <div class="nav-group" id="nav-departments">
           <button type="button" class="nav-group-toggle" id="departments-toggle" aria-expanded="true"><span>Departments</span><span aria-hidden="true">▾</span></button>
           <div id="sidebar-departments" class="nav-group-body"></div>
         </div>
         <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span aria-hidden="true">⏱</span><span>Time Logs</span></a>
-        <a href="#reports" data-route="reports" class="sidebar-nav-link admin-only hidden"><span aria-hidden="true">▤</span><span>Reports</span></a>
+        <a href="#reports" data-route="reports" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">▤</span><span>Reports</span></a>
         <a href="/admin" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">☰</span><span>User Management</span></a>
         <a href="#deptmgmt" data-route="deptmgmt" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">◫</span><span>Department Management</span></a>
         <a href="#integrations" data-route="integrations" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">⚙</span><span>Settings &amp; Integrations</span></a>
@@ -325,11 +325,13 @@
         <select id="board-task-owner" aria-label="Assign to team member"></select>
         <input id="board-task-due" aria-label="Due date" type="date" />
         <select id="board-task-category" aria-label="Task label">
-          <option value="other">Other</option><option value="npd">NPD</option><option value="new_line_form">New line form</option>
+          <option value="" selected>Choose task type…</option><option value="approval">Approval required</option>
+          <option value="npd">NPD</option><option value="new_line_form">New line form</option>
           <option value="supplier">Supplier</option><option value="client">Client</option><option value="retailer_outreach">Retailer</option>
           <option value="distributor_outreach">Distributor</option><option value="follow_up">Follow-up</option>
           <option value="meeting_action">Meeting</option><option value="decision">Decision</option><option value="opportunity">Opportunity</option>
         </select>
+        <input id="board-task-approver" maxlength="160" placeholder="Approver (CEO, client, etc.)" aria-label="External approver" />
         <button type="submit">Add card</button>
       </form>
       <div id="board-columns" class="board-columns"></div>
@@ -379,6 +381,15 @@
     </main>
   </div>
 
+  <div id="pending-task-reminder" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="pending-task-reminder-title">
+    <div class="modal-card">
+      <h3 id="pending-task-reminder-title">Your pending tasks</h3>
+      <p class="muted">These assigned tasks are not completed yet.</p>
+      <ul id="pending-task-reminder-list" class="pending-task-reminder-list"></ul>
+      <div class="modal-actions"><button type="button" class="primary-action" id="pending-task-reminder-close">Got it</button></div>
+    </div>
+  </div>
+
   <div id="modal" class="modal hidden" role="dialog">
     <div class="modal-card">
       <h3>Add a brand</h3>
@@ -424,6 +435,7 @@
       <label>Brand <select id="quick-task-brand" required></select></label>
       <label id="quick-task-department-label" class="admin-only hidden">Department <select id="quick-task-department"></select></label>
       <label>Due date <input id="quick-task-due" type="date" /></label>
+      <label>Approver <input id="quick-task-approver" maxlength="160" placeholder="CEO, client, etc. (optional)" /></label>
       <p id="quick-task-error" class="form-error" role="alert"></p>
       <div class="modal-actions">
         <button type="button" class="ghost" id="quick-task-cancel">Cancel</button>

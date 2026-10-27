@@ -2290,6 +2290,52 @@ def _insert_notification(
     )
 
 
+def notify_super_admins(
+    event_type: str,
+    title: str,
+    body: str,
+    actor_user_id: Optional[str],
+    *,
+    source_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    target_url: str = "/admin",
+) -> int:
+    """Notify active super admins about approval and administration events."""
+    if event_type not in ("approval", "admin"):
+        raise ValueError("Unsupported super-admin notification type")
+    now = _now()
+    notification_source = source_id or _uid()
+    recipients = 0
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id FROM users WHERE role = 'super_admin' AND status = 'active' AND id != ?",
+            (actor_user_id,),
+        ).fetchall()
+        for row in rows:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO notifications
+                    (id, recipient_user_id, actor_user_id, notification_type, source_id,
+                     title, body, target_url, created_at, task_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _uid(),
+                    row["id"],
+                    actor_user_id,
+                    event_type,
+                    notification_source,
+                    title,
+                    body,
+                    target_url,
+                    now,
+                    task_id,
+                ),
+            )
+            recipients += cursor.rowcount
+    return recipients
+
+
 def notify_task_event(
     task_id: str,
     event_type: str,
@@ -2483,7 +2529,7 @@ def list_notifications(
 ) -> list[dict[str, Any]]:
     clauses = [
         "n.recipient_user_id = ?",
-        "n.notification_type IN ('assignment', 'review', 'comment', 'mention', 'slack')",
+        "n.notification_type IN ('assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack')",
     ]
     params: list[Any] = [user_id]
     if unread_only or read_filter == "unread":
@@ -2530,7 +2576,7 @@ def count_unread_notifications(user_id: str) -> int:
             """
             SELECT COUNT(*) AS total FROM notifications
             WHERE recipient_user_id = ?
-              AND notification_type IN ('assignment', 'review', 'comment', 'mention', 'slack')
+              AND notification_type IN ('assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack')
               AND read_at IS NULL
             """,
             (user_id,),
@@ -2646,22 +2692,29 @@ def create_approval(
     return get_approval(aid)  # type: ignore
 
 
+def _approval_dict(row: sqlite3.Row) -> dict[str, Any]:
+    approval = dict(row)
+    try:
+        payload = json.loads(approval.get("payload_json") or "{}")
+    except (TypeError, ValueError):
+        payload = {}
+    approval["approver_name"] = payload.get("approver_name", "") if isinstance(payload, dict) else ""
+    return approval
+
+
 def get_approval(approval_id: str) -> Optional[dict[str, Any]]:
     with connect() as conn:
-        return row_to_dict(
-            conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
-        )
+        row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+    return _approval_dict(row) if row else None
 
 
 def list_approvals(status: str = "pending") -> list[dict[str, Any]]:
     with connect() as conn:
-        return [
-            dict(r)
-            for r in conn.execute(
-                "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC",
-                (status,),
-            ).fetchall()
-        ]
+        rows = conn.execute(
+            "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC",
+            (status,),
+        ).fetchall()
+    return [_approval_dict(row) for row in rows]
 
 
 def decide_approval(approval_id: str, approved: bool) -> Optional[dict[str, Any]]:

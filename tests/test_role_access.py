@@ -134,7 +134,7 @@ class RoleAccessTests(unittest.TestCase):
             200,
         )
 
-    def test_role_boundaries_apply_to_brand_and_administration_apis(self):
+    def test_all_roles_see_workspace_but_management_and_reports_are_restricted(self):
         task = db.create_task(
             business_id=self.business["id"],
             title="Visible brand work",
@@ -179,6 +179,34 @@ class RoleAccessTests(unittest.TestCase):
         self.assertEqual(self.admin_client.get("/api/approvals").status_code, 200)
         self.assertEqual(
             self.operator_client.get(f"/api/tasks/{task['id']}").status_code,
+            200,
+        )
+        expected_task_ids = {task["id"], unrelated_task["id"]}
+        expected_department_ids = {item["id"] for item in db.list_departments()}
+        for client in (self.sa_client, self.admin_client, self.operator_client):
+            self.assertEqual(
+                {item["id"] for item in client.get("/api/tasks?open_only=false").json()},
+                expected_task_ids,
+            )
+            self.assertEqual(
+                {item["id"] for item in client.get("/api/departments").json()},
+                expected_department_ids,
+            )
+        now = datetime.now(timezone.utc)
+        report_params = {
+            "start": (now - timedelta(days=1)).isoformat(),
+            "end": (now + timedelta(days=1)).isoformat(),
+        }
+        self.assertEqual(
+            self.admin_client.get("/api/reports/overview", params=report_params).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.operator_client.get("/api/reports/overview", params=report_params).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.sa_client.get("/api/reports/overview", params=report_params).status_code,
             200,
         )
 

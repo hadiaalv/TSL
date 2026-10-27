@@ -225,6 +225,7 @@ class BrandImportIn(BaseModel):
 class TaskIn(BaseModel):
     business_id: Optional[str] = None
     title: str = Field(min_length=1, max_length=300)
+    approver_name: str = Field(default="", max_length=160)
     category: str = "other"
     owner: str = "me"
     priority: str = "P2"
@@ -555,7 +556,7 @@ def admin_create_user(
     request: Request,
     body: AdminUserCreate,
 ) -> dict[str, Any]:
-    auth.require_super_admin(request)
+    actor = auth.require_super_admin(request)
 
     role = body.role or "operator"
     if role not in db.USER_ROLES:
@@ -585,6 +586,13 @@ def admin_create_user(
             or body.username
         ),
         role=role,
+    )
+    db.notify_super_admins(
+        "admin",
+        f"User created: {user['username']}",
+        "A workspace user account was created.",
+        str(actor["id"]),
+        target_url="/admin",
     )
 
     return {
@@ -689,6 +697,14 @@ def admin_patch_user(
         user_id,
         **fields,
     )
+    if fields:
+        db.notify_super_admins(
+            "admin",
+            f"User updated: {updated['username']}",
+            "A workspace user account was updated.",
+            str(actor["id"]),
+            target_url="/admin",
+        )
 
     return {
         "user": {
@@ -1259,6 +1275,8 @@ def create_task(
 ) -> dict[str, Any]:
     actor = auth.require_task_manager(request)
     fields = body.model_dump()
+    approver_name = body.approver_name.strip()
+    fields.pop("approver_name")
     _validate_task_fields(fields)
     business_id = body.business_id or _general_business_id()
     if not db.get_business(business_id):
@@ -1278,6 +1296,23 @@ def create_task(
         fields["notes"] = description
     fields.pop("owner", None)
     task = db.create_task(**fields, actor_user_id=str(actor["id"]))
+    if approver_name:
+        approval = db.create_approval(
+            summary=f"Approval requested for task: {task['title']}",
+            action_type="task_approval",
+            business_id=business_id,
+            task_id=task["id"],
+            payload={"approver_name": approver_name},
+        )
+        db.notify_super_admins(
+            "approval",
+            f"Approval needed: {approver_name}",
+            f"{task['title']} · {task.get('business_name') or 'General'}",
+            str(actor["id"]),
+            source_id=f"{approval['id']}:requested",
+            task_id=task["id"],
+            target_url=f"/?task={task['id']}",
+        )
     event_type = "review" if task.get("status") == "waiting_on" else "assignment"
     db.notify_task_event(task["id"], event_type, assignee_ids, str(actor["id"]))
     return db.get_task(task["id"]) or task
@@ -1414,7 +1449,7 @@ def reports_overview(
     priority: Optional[str] = None,
     completion: Optional[str] = None,
 ) -> dict[str, Any]:
-    actor = auth.require_user(request)
+    actor = auth.require_super_admin(request)
     if completion not in (None, "", "completed", "pending"):
         raise HTTPException(422, "completion must be completed or pending")
     start_s, end_s = _report_window(start, end)
@@ -1442,16 +1477,21 @@ def list_departments(request: Request, include_inactive: bool = False) -> list[d
 
 @app.post("/api/departments")
 def create_department(request: Request, body: DepartmentIn) -> dict[str, Any]:
-    auth.require_super_admin(request)
+    actor = auth.require_super_admin(request)
     try:
-        return db.create_department(body.name, body.description, body.color, body.icon)
+        department = db.create_department(body.name, body.description, body.color, body.icon)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    db.notify_super_admins(
+        "admin", f"Department created: {department['name']}",
+        "A workspace department was created.", str(actor["id"]), target_url="/?route=deptmgmt",
+    )
+    return department
 
 
 @app.patch("/api/departments/{department_id}")
 def patch_department(request: Request, department_id: str, body: DepartmentPatch) -> dict[str, Any]:
-    auth.require_super_admin(request)
+    actor = auth.require_super_admin(request)
     if body.status is not None and body.status not in ("active", "inactive"):
         raise HTTPException(422, "status must be active or inactive")
     try:
@@ -1460,6 +1500,10 @@ def patch_department(request: Request, department_id: str, body: DepartmentPatch
         raise HTTPException(400, str(e)) from e
     if not updated:
         raise HTTPException(404, "Department not found")
+    db.notify_super_admins(
+        "admin", f"Department updated: {updated['name']}",
+        "A workspace department was updated.", str(actor["id"]), target_url="/?route=deptmgmt",
+    )
     return updated
 
 
@@ -1481,16 +1525,28 @@ def add_department_member(request: Request, department_id: str, body: Department
     target = db.get_user(body.user_id)
     if not target or target.get("status") != "active":
         raise HTTPException(400, "User not found or inactive")
+    department = db.get_department(department_id)
     db.add_department_member(department_id, body.user_id, str(actor["id"]))
+    db.notify_super_admins(
+        "admin", f"Department member added: {target.get('display_name') or target['username']}",
+        f"A member was added to {department['name']}.",
+        str(actor["id"]), target_url="/?route=deptmgmt",
+    )
     return db.list_department_members(department_id)
 
 
 @app.delete("/api/departments/{department_id}/members/{user_id}")
 def remove_department_member(request: Request, department_id: str, user_id: str) -> list[dict[str, Any]]:
-    auth.require_super_admin(request)
-    if not db.get_department(department_id):
+    actor = auth.require_super_admin(request)
+    department = db.get_department(department_id)
+    if not department:
         raise HTTPException(404, "Department not found")
     db.remove_department_member(department_id, user_id)
+    db.notify_super_admins(
+        "admin", f"Department member removed: {user_id}",
+        f"A member was removed from {department['name']}.",
+        str(actor["id"]), target_url="/?route=deptmgmt",
+    )
     return db.list_department_members(department_id)
 
 
@@ -1624,7 +1680,7 @@ def decide(
     approval_id: str,
     body: ApprovalDecision,
 ) -> dict[str, Any]:
-    auth.require_task_manager(request)
+    actor = auth.require_task_manager(request)
     row = db.decide_approval(
         approval_id,
         body.approved,
@@ -1635,6 +1691,16 @@ def decide(
             404,
             "Approval not found",
         )
+    status_text = "approved" if body.approved else "rejected"
+    db.notify_super_admins(
+        "approval",
+        f"Approval {status_text}",
+        str(row.get("summary") or "A workspace approval was decided."),
+        str(actor["id"]),
+        source_id=f"{approval_id}:decided",
+        task_id=row.get("task_id"),
+        target_url=f"/?task={row['task_id']}" if row.get("task_id") else "/admin",
+    )
 
     return row
 
