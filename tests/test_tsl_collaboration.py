@@ -115,6 +115,45 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             {member["username"] for member in self.author_client.get("/api/team/members").json()},
         )
 
+    def test_moving_assigned_task_to_review_notifies_reviewer_who_can_complete_it(self):
+        assigned = self.author_client.patch(
+            f"/api/tasks/{self.task['id']}",
+            json={"assignee_ids": [self.recipient["id"]]},
+        )
+        self.assertEqual(assigned.status_code, 200)
+
+        review = self.author_client.patch(
+            f"/api/tasks/{self.task['id']}",
+            json={"status": "waiting_on"},
+        )
+        self.assertEqual(review.status_code, 200)
+        notifications = self.recipient_client.get("/api/notifications").json()
+        self.assertEqual(notifications["unread_count"], 2)
+        review_notification = next(
+            item for item in notifications["items"] if item["notification_type"] == "review"
+        )
+        self.assertIn("requested your review", review_notification["title"])
+        self.assertEqual(review_notification["task_id"], self.task["id"])
+
+        completed = self.recipient_client.patch(
+            f"/api/tasks/{self.task['id']}",
+            json={"status": "done"},
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(completed.json()["status"], "done")
+
+    def test_assigning_reviewer_to_task_already_in_review_sends_review_notification(self):
+        db.update_task(self.task["id"], status="waiting_on")
+
+        assigned = self.author_client.patch(
+            f"/api/tasks/{self.task['id']}",
+            json={"assignee_ids": [self.recipient["id"]]},
+        )
+        self.assertEqual(assigned.status_code, 200)
+        notifications = self.recipient_client.get("/api/notifications").json()
+        self.assertEqual(notifications["unread_count"], 1)
+        self.assertEqual(notifications["items"][0]["notification_type"], "review")
+
     def test_sound_preference_persists_per_user(self):
         enabled = self.recipient_client.put(
             "/api/notifications/sound",

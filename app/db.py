@@ -2296,15 +2296,19 @@ def notify_task_event(
     recipient_ids: list[str],
     actor_user_id: Optional[str],
 ) -> int:
-    """Notify newly assigned users, but never the actor or other task participants."""
-    if event_type != "assignment":
+    """Notify task assignees about assignments or review requests."""
+    if event_type not in ("assignment", "review"):
         return 0
     task = get_task(task_id)
     if not task:
         return 0
     actor = get_user(actor_user_id) if actor_user_id else None
     actor_name = (actor.get("display_name") or actor["username"]) if actor else "Someone"
-    title = f"{actor_name} assigned you: {task['title']}"
+    title = (
+        f"{actor_name} requested your review: {task['title']}"
+        if event_type == "review"
+        else f"{actor_name} assigned you: {task['title']}"
+    )
     now = _now()
     sent = 0
     with connect() as conn:
@@ -2439,7 +2443,7 @@ def list_notifications(
     unread_only: bool = False,
     read_filter: str = "all",
 ) -> list[dict[str, Any]]:
-    clauses = ["n.recipient_user_id = ?", "n.notification_type IN ('assignment', 'slack')"]
+    clauses = ["n.recipient_user_id = ?", "n.notification_type IN ('assignment', 'review', 'slack')"]
     params: list[Any] = [user_id]
     if unread_only or read_filter == "unread":
         clauses.append("n.read_at IS NULL")
@@ -2484,7 +2488,7 @@ def count_unread_notifications(user_id: str) -> int:
         row = conn.execute(
             """
             SELECT COUNT(*) AS total FROM notifications
-            WHERE recipient_user_id = ? AND notification_type IN ('assignment', 'slack')
+            WHERE recipient_user_id = ? AND notification_type IN ('assignment', 'review', 'slack')
               AND read_at IS NULL
             """,
             (user_id,),

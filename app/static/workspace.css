@@ -155,7 +155,6 @@ body.drawer-open { overflow: hidden; }
 .assign-list label { display: flex; flex-direction: row; align-items: center; gap: 6px; color: var(--ink); padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .assign-list label:hover { background: var(--bg-elev); }
 .assign-list input { width: auto; }
-.ws-flow { margin: 0; font-size: .82rem; }
 .ws-quick-add { padding: 6px; }
 .ws-quick-add input { width: 100%; font: inherit; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; background: transparent; }
 .ws-quick-add input:focus { background: var(--bg-elev); border-style: solid; }

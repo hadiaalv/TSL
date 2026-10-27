@@ -1338,7 +1338,13 @@ def patch_task(
     actor_id = str(actor["id"])
     before = set(previous.get("assignee_ids", []))
     after = set(updated.get("assignee_ids", []))
-    db.notify_task_event(task_id, "assignment", sorted(after - before), actor_id)
+    newly_assigned = after - before
+    requested_review = previous.get("status") != "waiting_on" and updated.get("status") == "waiting_on"
+    review_recipients = after if requested_review else (
+        newly_assigned if updated.get("status") == "waiting_on" else set()
+    )
+    db.notify_task_event(task_id, "review", sorted(review_recipients), actor_id)
+    db.notify_task_event(task_id, "assignment", sorted(newly_assigned - review_recipients), actor_id)
     return updated
 
 

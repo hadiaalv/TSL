@@ -17,7 +17,7 @@
     completed: "Completed Tasks", overdue: "Overdue Tasks",
   };
   const EVENT_LABEL = {
-    assignment: "Assigned", unassignment: "Removed", reassignment: "Reassigned",
+    assignment: "Assigned", review: "Review requested", unassignment: "Removed", reassignment: "Reassigned",
     mention: "Mention", comment: "Comment",
   };
 
@@ -167,7 +167,6 @@
         ${state.canManageTasks ? `<button type="button" class="primary-action" id="ws-new-task">+ New task</button>` : ""}
       </div>
       <div class="ws-chips">${chips}</div>
-      ${state.canManageTasks ? `<p class="ws-flow muted"><strong>How it works:</strong> ${isDept ? "add a task at the bottom of a column" : "click + New task"} → open it → <em>Assign people</em> (only this department's members are listed). Assignees are notified when assigned.</p>` : `<p class="ws-flow muted">All workspace tasks are visible. You can update the status and checklist on tasks assigned to you.</p>`}
       <div class="ws-filters">
         <input type="search" id="ws-text" placeholder="Filter by title…" value="${esc(f.text)}" aria-label="Filter by title" />
         ${isDept ? "" : `<select id="ws-dept" aria-label="Department"><option value="">All departments</option>${state.departments.map((d) => `<option value="${esc(d.id)}"${f.department === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select>`}
@@ -323,7 +322,6 @@
           <div class="td-field"><span>Assignees</span>
             <div class="assignee-chips">${draft.assignee_ids.map((id) => `<span class="assignee-chip"><span class="avatar">${esc(initials(nameOf(id)))}</span>${esc(nameOf(id))}${canEdit ? `<button type="button" data-remove-assignee="${esc(id)}" aria-label="Remove">×</button>` : ""}</span>`).join("") || `<span class="muted">Unassigned</span>`}</div>
             ${assignBlock}
-            <p class="td-hint">Assignees receive a notification when assigned.</p>
           </div>
           <div class="td-field"><span>Department</span><select name="department_id" form="drawer-form" ${canEdit ? "" : "disabled"} ${!task && state.me?.role === "admin" ? "required" : ""}>
             ${!task && state.me?.role === "admin"
