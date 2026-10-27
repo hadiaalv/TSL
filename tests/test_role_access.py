@@ -107,6 +107,95 @@ class RoleAccessTests(unittest.TestCase):
             403,
         )
 
+    def test_task_approval_records_external_approver_and_notifies_super_admin(self):
+        created = self.admin_client.post(
+            "/api/tasks",
+            json={
+                "business_id": self.business["id"],
+                "title": "Approve launch",
+                "department_id": self.department["id"],
+                "assignee_ids": [self.operator["id"]],
+                "approver_name": "Client: Alex",
+            },
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        brand_tasks = self.admin_client.get(
+            f"/api/tasks?business_id={self.business['id']}&open_only=false"
+        ).json()
+        brand_task = next(row for row in brand_tasks if row["id"] == created.json()["id"])
+        self.assertEqual(brand_task["status"], "open")
+        status_update = self.admin_client.patch(
+            f"/api/tasks/{created.json()['id']}",
+            json={"status": "in_progress"},
+        )
+        self.assertEqual(status_update.status_code, 200)
+        brand_tasks = self.admin_client.get(
+            f"/api/tasks?business_id={self.business['id']}&open_only=false"
+        ).json()
+        self.assertEqual(
+            next(row for row in brand_tasks if row["id"] == created.json()["id"])["status"],
+            "in_progress",
+        )
+        approval = next(
+            row for row in self.admin_client.get("/api/approvals").json()
+            if row["task_id"] == created.json()["id"]
+        )
+        self.assertEqual(approval["approver_name"], "Client: Alex")
+
+        notifications = self.sa_client.get("/api/notifications").json()
+        request_notice = next(
+            row for row in notifications["items"] if row["notification_type"] == "approval"
+        )
+        self.assertIn("Approval needed", request_notice["title"])
+        self.assertEqual(request_notice["task_id"], created.json()["id"])
+
+        decided = self.admin_client.post(
+            f"/api/approvals/{approval['id']}/decide",
+            json={"approved": True},
+        )
+        self.assertEqual(decided.status_code, 200)
+        self.assertEqual(decided.json()["status"], "approved")
+        notifications = self.sa_client.get("/api/notifications").json()
+        self.assertEqual(
+            len([row for row in notifications["items"] if row["notification_type"] == "approval"]),
+            2,
+        )
+
+    def test_super_admin_can_edit_password_and_deactivate_user(self):
+        edited = self.sa_client.patch(
+            f"/api/admin/users/{self.operator['id']}",
+            json={"display_name": "Updated Operator", "password": "new-password"},
+        )
+        self.assertEqual(edited.status_code, 200, edited.text)
+        self.assertEqual(edited.json()["user"]["display_name"], "Updated Operator")
+
+        updated_client = TestClient(app)
+        login = updated_client.post(
+            "/api/auth/login",
+            json={"username": "content-operator", "password": "new-password"},
+        )
+        self.assertEqual(login.status_code, 200, login.text)
+
+        deactivated = self.sa_client.patch(
+            f"/api/admin/users/{self.operator['id']}",
+            json={"status": "disabled"},
+        )
+        self.assertEqual(deactivated.status_code, 200)
+        self.assertEqual(
+            updated_client.post(
+                "/api/auth/login",
+                json={"username": "content-operator", "password": "new-password"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.admin_client.patch(
+                f"/api/admin/users/{self.operator['id']}",
+                json={"display_name": "Unauthorized"},
+            ).status_code,
+            403,
+        )
+
     def test_operator_cannot_create_tasks_or_edit_management_fields(self):
         task = db.create_task(
             business_id=self.business["id"],
