@@ -231,14 +231,16 @@ class DepartmentWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.ann_c.get("/api/notifications").json()["unread_count"], 0)
         self.assertEqual(self.ann_c.get("/api/notifications", params={"filter": "bogus"}).status_code, 422)
 
-    def test_comments_do_not_notify_and_still_track_unread(self):
+    def test_comments_notify_assignees_and_still_track_unread(self):
         task = self._create(assignee_ids=[self.ann["id"], self.bob["id"]])
         self.ann_c.post("/api/notifications/read-all")
         self.bob_c.post("/api/notifications/read-all")
         res = self.ann_c.post(f"/api/tasks/{task['id']}/comments", json={"content": "On it"})
         self.assertEqual(res.status_code, 200)
         bob_items = self.bob_c.get("/api/notifications", params={"filter": "unread"}).json()["items"]
-        self.assertEqual(bob_items, [])
+        self.assertEqual(len(bob_items), 1)
+        self.assertEqual(bob_items[0]["notification_type"], "comment")
+        self.assertIn("commented on", bob_items[0]["title"])
         self.assertEqual(self.ann_c.get("/api/notifications", params={"filter": "unread"}).json()["items"], [])
 
         card = next(t for t in self.bob_c.get("/api/tasks").json() if t["id"] == task["id"])
@@ -248,7 +250,7 @@ class DepartmentWorkspaceTests(unittest.TestCase):
         card = next(t for t in self.bob_c.get("/api/tasks").json() if t["id"] == task["id"])
         self.assertEqual(card["unread_comments"], 0)
 
-    def test_mentions_are_recorded_without_notifications(self):
+    def test_mentions_are_recorded_and_notify_mentioned_users(self):
         task = self._create()
         comment = self.ann_c.post(
             f"/api/tasks/{task['id']}/comments",
@@ -258,8 +260,10 @@ class DepartmentWorkspaceTests(unittest.TestCase):
             set(json.loads(comment["mentioned_user_ids"])),
             {self.cy["id"], self.bob["id"]},
         )
-        self.assertEqual(self.cy_c.get("/api/notifications").json()["items"], [])
-        self.assertEqual(self.bob_c.get("/api/notifications").json()["items"], [])
+        for client in (self.cy_c, self.bob_c):
+            notifications = client.get("/api/notifications").json()
+            self.assertEqual(notifications["unread_count"], 1)
+            self.assertEqual(notifications["items"][0]["notification_type"], "mention")
 
     def test_time_logs_belong_to_assignee_actor_with_department(self):
         task = self._create()

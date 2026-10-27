@@ -52,7 +52,7 @@ class TSLTaskCollaborationTests(unittest.TestCase):
         if response.status_code != 200:
             raise AssertionError(f"Could not log in test user: {response.text}")
 
-    def test_mentions_are_recorded_without_notifications(self):
+    def test_mentions_are_recorded_and_notify_mentioned_users(self):
         response = self.author_client.post(
             f"/api/tasks/{self.task['id']}/comments",
             json={"content": "Please review @BOARD-RECIPIENT and @board-recipient"},
@@ -64,10 +64,42 @@ class TSLTaskCollaborationTests(unittest.TestCase):
             self.author_client.get("/api/notifications").json()["unread_count"],
             0,
         )
-        self.assertEqual(
-            self.recipient_client.get("/api/notifications").json()["unread_count"],
-            0,
+        notification = self.recipient_client.get("/api/notifications").json()
+        self.assertEqual(notification["unread_count"], 1)
+        self.assertEqual(notification["items"][0]["notification_type"], "mention")
+        self.assertIn("mentioned you", notification["items"][0]["title"])
+
+    def test_review_comments_and_mentions_notify_assignee(self):
+        assigned = self.author_client.patch(
+            f"/api/tasks/{self.task['id']}",
+            json={"assignee_ids": [self.recipient["id"]], "status": "waiting_on"},
         )
+        self.assertEqual(assigned.status_code, 200)
+        self.recipient_client.post("/api/notifications/read-all")
+
+        response = self.author_client.post(
+            f"/api/tasks/{self.task['id']}/comments",
+            json={"content": "Please check this"},
+        )
+        self.assertEqual(response.status_code, 200)
+        notification = self.recipient_client.get("/api/notifications").json()
+        comment_notification = next(
+            item for item in notification["items"] if item["notification_type"] == "comment"
+        )
+        self.assertIn("commented on", comment_notification["title"])
+        self.assertEqual(comment_notification["task_id"], self.task["id"])
+
+        mentioned = self.author_client.post(
+            f"/api/tasks/{self.task['id']}/comments",
+            json={"content": "Please review @board-recipient"},
+        )
+        self.assertEqual(mentioned.status_code, 200)
+        notifications = self.recipient_client.get("/api/notifications").json()
+        mention_notification = next(
+            item for item in notifications["items"] if item["notification_type"] == "mention"
+        )
+        self.assertIn("mentioned you", mention_notification["title"])
+        self.assertEqual(notifications["unread_count"], 2)
 
     def test_assigning_task_notifies_assignee_and_board_endpoints_work(self):
         response = self.author_client.patch(

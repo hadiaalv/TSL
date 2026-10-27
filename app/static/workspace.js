@@ -18,7 +18,7 @@
   };
   const EVENT_LABEL = {
     assignment: "Assigned", review: "Review requested", unassignment: "Removed", reassignment: "Reassigned",
-    mention: "Mention", comment: "Comment",
+    mention: "Mentioned", comment: "New comment",
   };
 
   const state = {
@@ -197,6 +197,7 @@
 
   function cardMarkup(t) {
     const names = t.assignees || [];
+    const businessName = t.business_name || state.businesses.find((business) => business.id === t.business_id)?.name || "General";
     const avatars = names.length
       ? `<span class="avatars">${names.slice(0, 3).map((a) => `<span class="avatar" title="${esc(a.display_name)}">${esc(initials(a.display_name))}</span>`).join("")}${names.length > 3 ? `<span class="avatar more">+${names.length - 3}</span>` : ""}</span>`
       : `<span class="muted unassigned-tag">Unassigned</span>`;
@@ -204,7 +205,7 @@
     const canMove = state.canManageTasks || (t.assignee_ids || []).includes(state.me?.id);
     return `<article class="ws-card" draggable="${canMove}" tabindex="0" data-id="${esc(t.id)}" data-status="${esc(t.status)}">
       <div class="ws-card-top">${deptChip(t.department_id, t.department_name, t.department_color)}
-        <span class="brand-chip">${esc(t.business_name || "General")}</span>
+        <span class="brand-chip"><span class="brand-chip-label">Brand:</span> ${esc(businessName)}</span>
         ${["P0", "P1"].includes(t.priority) ? `<span class="priority-pill priority-${esc(t.priority.toLowerCase())}">${esc(t.priority)}</span>` : ""}
       </div>
       <h4>${esc(t.title)}</h4>

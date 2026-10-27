@@ -2339,7 +2339,7 @@ def create_task_comment(
     content: str,
     mentioned_user_ids: list[str],
 ) -> Optional[dict[str, Any]]:
-    """Persist a comment without sending notifications; only assignments notify users."""
+    """Persist a comment and notify assignees and mentioned users."""
     comment_id = _uid()
     now = _now()
     task = get_task(task_id)
@@ -2354,6 +2354,17 @@ def create_task_comment(
             return None
         active_mentions = _active_comment_mentions(conn, set(mentioned_user_ids))
         mentioned_ids = [user_id for user_id in dict.fromkeys(mentioned_user_ids) if user_id in active_mentions]
+        assignee_ids = {
+            row["user_id"]
+            for row in conn.execute(
+                """
+                SELECT a.user_id FROM task_assignees a
+                JOIN users u ON u.id = a.user_id
+                WHERE a.task_id = ? AND u.status = 'active'
+                """,
+                (task_id,),
+            ).fetchall()
+        }
         conn.execute(
             """
             INSERT INTO task_comments
@@ -2378,6 +2389,32 @@ def create_task_comment(
             """,
             (comment_id,),
         ).fetchone()
+        author_name = author["display_name"] or author["username"]
+        business_name = task.get("business_name") or "General"
+        notified_mentions = set(mentioned_ids) - {author_user_id}
+        notified_assignees = assignee_ids - notified_mentions - {author_user_id}
+        for recipient_id in notified_mentions:
+            _insert_notification(
+                conn,
+                recipient_id=recipient_id,
+                actor_id=author_user_id,
+                event_type="mention",
+                source_id=comment_id,
+                title=f"{author_name} mentioned you on {task['title']} · {business_name}",
+                task=task,
+                now=now,
+            )
+        for recipient_id in notified_assignees:
+            _insert_notification(
+                conn,
+                recipient_id=recipient_id,
+                actor_id=author_user_id,
+                event_type="comment",
+                source_id=comment_id,
+                title=f"{author_name} commented on {task['title']} · {business_name}",
+                task=task,
+                now=now,
+            )
     return row_to_dict(row)
 
 
@@ -2444,7 +2481,10 @@ def list_notifications(
     unread_only: bool = False,
     read_filter: str = "all",
 ) -> list[dict[str, Any]]:
-    clauses = ["n.recipient_user_id = ?", "n.notification_type IN ('assignment', 'review', 'slack')"]
+    clauses = [
+        "n.recipient_user_id = ?",
+        "n.notification_type IN ('assignment', 'review', 'comment', 'mention', 'slack')",
+    ]
     params: list[Any] = [user_id]
     if unread_only or read_filter == "unread":
         clauses.append("n.read_at IS NULL")
@@ -2489,7 +2529,8 @@ def count_unread_notifications(user_id: str) -> int:
         row = conn.execute(
             """
             SELECT COUNT(*) AS total FROM notifications
-            WHERE recipient_user_id = ? AND notification_type IN ('assignment', 'review', 'slack')
+            WHERE recipient_user_id = ?
+              AND notification_type IN ('assignment', 'review', 'comment', 'mention', 'slack')
               AND read_at IS NULL
             """,
             (user_id,),
