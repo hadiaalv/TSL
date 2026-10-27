@@ -238,6 +238,7 @@ function renderApprovals(list) {
         <div>
           <div class="row-title">${escapeHtml(a.action_type || "Approval")}</div>
           <div class="row-sub">${escapeHtml((a.summary || "").slice(0, 140))}</div>
+          ${a.approver_name ? `<div class="row-sub">External approver: ${escapeHtml(a.approver_name)}</div>` : ""}
         </div>
         <div class="row-sub">${escapeHtml(a.created_at || "")}</div>
         <div><span class="badge warn">pending</span></div>

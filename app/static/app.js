@@ -1205,7 +1205,7 @@ async function refreshApprovals() {
     .map(
       (a) => `<div class="item" data-id="${esc(a.id)}">
         <div>${esc(a.summary)}</div>
-        <div class="muted">${esc(a.action_type)}</div>
+        <div class="muted">${esc(a.action_type)}${a.approver_name ? ` · Approver: ${esc(a.approver_name)}` : ""}</div>
         <div class="actions">
           <button data-ok="1">Approve</button>
           <button data-ok="0" class="ghost">Reject</button>

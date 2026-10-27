@@ -18,7 +18,7 @@
   };
   const EVENT_LABEL = {
     assignment: "Assigned", review: "Review requested", unassignment: "Removed", reassignment: "Reassigned",
-    mention: "Mentioned", comment: "New comment",
+    mention: "Mentioned", comment: "New comment", approval: "Approval", admin: "Admin update",
   };
 
   const state = {
