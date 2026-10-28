@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app import auth, db
+from app import attendance, auth, db
 from app.brand_import import merge_drive_context, normalize_import_items
 from app.config import settings
 
@@ -183,6 +183,31 @@ class BusinessPatch(BaseModel):
 
 class BrandStarIn(BaseModel):
     starred: bool
+
+
+class AttendanceHeartbeatIn(BaseModel):
+    request_id: str = Field(default_factory=lambda: uuid.uuid4().hex, min_length=16, max_length=64)
+
+
+class AttendancePolicyIn(BaseModel):
+    timezone: str = Field(min_length=1, max_length=80)
+    heartbeat_interval_seconds: int = Field(ge=15, le=300)
+    inactivity_timeout_seconds: int = Field(ge=16, le=900)
+    work_start: str = Field(pattern=r"^\d{2}:\d{2}$")
+    work_end: str = Field(pattern=r"^\d{2}:\d{2}$")
+    late_grace_minutes: int = Field(ge=0, le=240)
+    overtime_enabled: bool
+    overtime_grace_minutes: int = Field(ge=0, le=480)
+    working_days: list[int] = Field(min_length=1, max_length=7)
+
+
+class AttendanceCorrectionIn(BaseModel):
+    delta_seconds: int = Field(ge=-86400, le=86400)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class AttendanceResolutionIn(BaseModel):
+    resolution_note: str = Field(min_length=1, max_length=500)
 
 
 BRAND_LINK_KINDS = {"website", "instagram", "facebook", "tiktok", "youtube", "linkedin", "x", "shop", "drive", "other"}
@@ -1436,6 +1461,168 @@ def time_report(
         priority=priority,
         viewer=actor,
     )
+
+
+@app.get("/api/attendance/status")
+def attendance_status(request: Request) -> dict[str, Any]:
+    user = auth.require_user(request)
+    return attendance.status(str(user["id"]))
+
+
+@app.post("/api/attendance/check-in")
+def attendance_check_in(request: Request) -> dict[str, Any]:
+    user = auth.require_user(request)
+    try:
+        return attendance.check_in(str(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/attendance/heartbeat")
+def attendance_heartbeat(
+    request: Request, body: AttendanceHeartbeatIn
+) -> dict[str, Any]:
+    user = auth.require_user(request)
+    try:
+        return attendance.heartbeat(str(user["id"]), body.request_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/attendance/check-out")
+def attendance_check_out(request: Request) -> dict[str, Any]:
+    user = auth.require_user(request)
+    try:
+        return attendance.check_out(str(user["id"]))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.get("/api/attendance/report")
+def attendance_report(
+    request: Request,
+    month: str,
+    user_id: Optional[str] = None,
+    department_id: Optional[str] = None,
+) -> dict[str, Any]:
+    actor = auth.require_user(request)
+    actor_id = str(actor["id"])
+    role = actor.get("role")
+    target = user_id or actor_id
+    if role == "operator":
+        if target != actor_id or department_id:
+            raise HTTPException(403, "You can only view your own attendance")
+        allowed_ids = [actor_id]
+    elif role == "admin":
+        departments = set(db.user_department_ids(actor_id))
+        if department_id and department_id not in departments:
+            raise HTTPException(403, "You can only view attendance in your departments")
+        scoped_departments = [department_id] if department_id else sorted(departments)
+        allowed_ids = {actor_id}
+        active_ids = {
+            str(member["id"])
+            for department in scoped_departments
+            for member in db.list_department_members(department)
+            if member.get("status") == "active"
+        }
+        allowed_ids.update(active_ids)
+        if target == "all":
+            selected_ids = sorted(active_ids)
+        elif target not in allowed_ids:
+            raise HTTPException(403, "You can only view authorized attendance records")
+        else:
+            selected_ids = [target]
+        if department_id and target != "all":
+            membership = {
+                str(member["id"])
+                for member in db.list_department_members(department_id)
+                if member.get("status") == "active"
+            }
+            if target not in membership and target != actor_id:
+                raise HTTPException(403, "This employee is not in your selected department")
+    elif role == "super_admin":
+        if department_id and not db.get_department(department_id):
+            raise HTTPException(404, "Department not found")
+        if target == "all":
+            selected_ids = [str(user["id"]) for user in db.list_users()]
+        elif not db.get_user(target):
+            raise HTTPException(404, "Employee not found")
+        else:
+            selected_ids = [target]
+    else:
+        raise HTTPException(403, "Insufficient role permissions")
+    if role == "operator":
+        selected_ids = allowed_ids
+    try:
+        return attendance.report(month, selected_ids, department_id=department_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/attendance/policy")
+def attendance_policy(request: Request) -> dict[str, Any]:
+    auth.require_user(request)
+    return attendance.get_policy()
+
+
+@app.put("/api/attendance/policy")
+def attendance_policy_update(
+    request: Request, body: AttendancePolicyIn
+) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    try:
+        return attendance.update_policy(
+            str(actor["id"]),
+            timezone_name=body.timezone,
+            heartbeat_interval_seconds=body.heartbeat_interval_seconds,
+            inactivity_timeout_seconds=body.inactivity_timeout_seconds,
+            work_start=body.work_start,
+            work_end=body.work_end,
+            late_grace_minutes=body.late_grace_minutes,
+            overtime_enabled=body.overtime_enabled,
+            overtime_grace_minutes=body.overtime_grace_minutes,
+            working_days=body.working_days,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/attendance/sessions/{session_id}/corrections")
+def attendance_correction(
+    request: Request, session_id: str, body: AttendanceCorrectionIn
+) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    try:
+        return attendance.correct_session(
+            str(actor["id"]), session_id, body.delta_seconds, body.reason
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/attendance/events/{event_id}/resolve")
+def attendance_resolve_event(
+    request: Request, event_id: str, body: AttendanceResolutionIn
+) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    try:
+        return attendance.resolve_event(
+            str(actor["id"]), event_id, body.resolution_note
+        )
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/attendance/audit")
+def attendance_audit(
+    request: Request, session_id: Optional[str] = None, limit: int = Query(100, ge=1, le=500)
+) -> list[dict[str, Any]]:
+    auth.require_super_admin(request)
+    return attendance.audit_history(session_id=session_id, limit=limit)
 
 
 @app.get("/api/reports/overview")

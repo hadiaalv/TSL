@@ -382,6 +382,122 @@ def init_db() -> None:
         )
         _migrate_schema(conn)
         _migrate_workspace(conn)
+        _migrate_attendance(conn)
+
+
+def _migrate_attendance(conn: sqlite3.Connection) -> None:
+    """Create persistent office-attendance records independently of task timers."""
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS attendance_policy (
+            policy_id TEXT PRIMARY KEY CHECK (policy_id = 'default'),
+            timezone TEXT NOT NULL DEFAULT 'Asia/Karachi',
+            heartbeat_interval_seconds INTEGER NOT NULL DEFAULT 45,
+            inactivity_timeout_seconds INTEGER NOT NULL DEFAULT 180,
+            work_start TEXT NOT NULL DEFAULT '09:00',
+            work_end TEXT NOT NULL DEFAULT '18:00',
+            late_grace_minutes INTEGER NOT NULL DEFAULT 15,
+            overtime_enabled INTEGER NOT NULL DEFAULT 0,
+            overtime_grace_minutes INTEGER NOT NULL DEFAULT 30,
+            working_days_json TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS attendance_sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            status TEXT NOT NULL CHECK (status IN ('checked_in', 'paused', 'checked_out')),
+            checked_in_at TEXT NOT NULL,
+            checked_out_at TEXT,
+            last_heartbeat_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (checked_out_at IS NULL OR checked_out_at >= checked_in_at)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_one_active_session
+            ON attendance_sessions(user_id) WHERE checked_out_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_attendance_sessions_user_date
+            ON attendance_sessions(user_id, checked_in_at DESC);
+
+        CREATE TABLE IF NOT EXISTS attendance_intervals (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            CHECK (ended_at IS NULL OR ended_at >= started_at)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_intervals_session
+            ON attendance_intervals(session_id, started_at);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_one_open_interval
+            ON attendance_intervals(session_id) WHERE ended_at IS NULL;
+
+        CREATE TABLE IF NOT EXISTS attendance_heartbeats (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+            request_id TEXT NOT NULL,
+            received_at TEXT NOT NULL,
+            UNIQUE(session_id, request_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_heartbeats_session
+            ON attendance_heartbeats(session_id, received_at);
+
+        CREATE TABLE IF NOT EXISTS attendance_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES attendance_sessions(id) ON DELETE CASCADE,
+            event_type TEXT NOT NULL,
+            event_key TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            details_json TEXT NOT NULL DEFAULT '{}',
+            reviewed_at TEXT,
+            reviewed_by TEXT REFERENCES users(id),
+            resolution_note TEXT NOT NULL DEFAULT '',
+            UNIQUE(session_id, event_type, event_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_events_session
+            ON attendance_events(session_id, occurred_at);
+
+        CREATE TABLE IF NOT EXISTS attendance_corrections (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES attendance_sessions(id),
+            actor_user_id TEXT NOT NULL REFERENCES users(id),
+            delta_seconds INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_corrections_session
+            ON attendance_corrections(session_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS attendance_audit (
+            id TEXT PRIMARY KEY,
+            actor_user_id TEXT NOT NULL REFERENCES users(id),
+            action TEXT NOT NULL,
+            session_id TEXT REFERENCES attendance_sessions(id),
+            details_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_attendance_audit_session
+            ON attendance_audit(session_id, created_at);
+        """
+    )
+    existing_policy_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(attendance_policy)").fetchall()
+    }
+    if "overtime_enabled" not in existing_policy_cols:
+        conn.execute(
+            "ALTER TABLE attendance_policy ADD COLUMN overtime_enabled INTEGER NOT NULL DEFAULT 0"
+        )
+    if "overtime_grace_minutes" not in existing_policy_cols:
+        conn.execute(
+            "ALTER TABLE attendance_policy ADD COLUMN overtime_grace_minutes INTEGER NOT NULL DEFAULT 30"
+        )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO attendance_policy (policy_id, updated_at)
+        VALUES ('default', ?)
+        """,
+        (_now(),),
+    )
 
 
 def _backup_before_workspace_migration() -> None:

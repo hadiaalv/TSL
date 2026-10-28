@@ -166,7 +166,7 @@ function initSidebarState() {
 }
 
 const PAGES = {
-  home: "Overview", brands: "Brands", work: "Open Work", timelog: "Time Logs", calendar: "Calendar",
+  home: "Overview", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Attendance", calendar: "Calendar",
   ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Settings",
   workspace: "Tasks", notifications: "Notifications", reports: "Reports", deptmgmt: "Department Management",
 };
@@ -219,7 +219,7 @@ function routeAllowedForRole(route) {
   if (route.view === "brand") {
     return businessesCache.some((business) => business.id === route.businessId);
   }
-  return ["home", "brands", "work", "timelog", "notifications"].includes(route.view);
+  return ["home", "brands", "work", "timelog", "attendance", "notifications"].includes(route.view);
 }
 
 function setRoute(route, { replace = false } = {}) {
@@ -2377,6 +2377,7 @@ async function applyRoute() {
   }
   applyRouteView(route);
   if (route.view === "timelog") loadTimeLog().catch((error) => setStatus(error.message));
+  if (route.view === "attendance") window.TSLAttendance?.onRoute();
   if (route.view === "chat") initSlackView();
   else stopSlackPolling();
   window.TSLWorkspace?.onRoute(route);
@@ -2416,6 +2417,7 @@ async function initialize() {
   });
 
   await refreshSession();
+  window.TSLAttendance?.start();
   await refreshAll();
   await applyRoute();
 

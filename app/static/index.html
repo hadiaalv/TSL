@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css?v=20261102-responsive1" />
-  <link rel="stylesheet" href="/static/workspace.css?v=20261102-responsive1" />
+  <link rel="stylesheet" href="/static/workspace.css?v=20261028-attendance1" />
   <link rel="icon" type="image/png" href="/public/logo.png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
 </head>
@@ -46,6 +46,7 @@
           <div id="sidebar-departments" class="nav-group-body"></div>
         </div>
         <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span aria-hidden="true">⏱</span><span>Time Logs</span></a>
+        <a href="#attendance" data-route="attendance" class="sidebar-nav-link"><span aria-hidden="true">◷</span><span>Office Attendance</span></a>
         <a href="#reports" data-route="reports" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">▤</span><span>Reports</span></a>
         <a href="/admin" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">☰</span><span>User Management</span></a>
         <a href="#deptmgmt" data-route="deptmgmt" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">◫</span><span>Department Management</span></a>
@@ -260,6 +261,10 @@
         <div id="timelog-tasks" class="timelog-tasks"></div>
         <h3 class="timelog-subhead">Timeline</h3>
         <div id="timelog-entries" class="timelog-entries"></div>
+      </section>
+
+      <section id="attendance-view" class="page-view hidden">
+        <div id="attendance-root" class="ws-root"></div>
       </section>
 
       <section id="chat-view" class="page-view hidden">
@@ -488,7 +493,8 @@
   </aside>
 
   <script src="/static/emoji.js?v=20261025-emoji"></script>
-  <script src="/static/app.js?v=20261102-responsive1"></script>
+  <script src="/static/app.js?v=20261028-attendance1"></script>
   <script src="/static/workspace.js?v=20261102-responsive1"></script>
+  <script src="/static/attendance.js?v=20261028-attendance1"></script>
 </body>
 </html>

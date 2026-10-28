@@ -147,6 +147,61 @@ body.drawer-open { overflow: hidden; }
 .dept-list { display: grid; gap: 10px; }
 .member-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; padding-top: 8px; }
 
+/* Office attendance */
+.attendance-head { align-items: flex-start; }
+.attendance-card, .attendance-report, .attendance-employee, .attendance-policy {
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-elev); padding: 16px;
+}
+.attendance-card { display: grid; gap: 16px; }
+.attendance-card-heading, .attendance-report-head, .attendance-employee-heading {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+}
+.attendance-card-heading h2, .attendance-report-head h2, .attendance-employee-heading h3 { margin: 3px 0; }
+.attendance-state, .attendance-flag {
+  display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px;
+  background: var(--bg-soft); color: var(--ink); font-size: .75rem; font-weight: 700;
+}
+.attendance-state.state-checked_in { background: #e8f7ed; color: #17653b; }
+.attendance-state.state-paused, .attendance-flag { background: #fff5dc; color: #805509; }
+.attendance-state.state-checked_out { background: #eaf0f8; color: #40536d; }
+.attendance-metrics, .attendance-summary-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px;
+}
+.attendance-metrics > div, .attendance-summary-grid > div {
+  display: grid; gap: 4px; padding: 11px 12px; border-radius: 9px; background: var(--bg-soft);
+}
+.attendance-metrics span, .attendance-summary-grid span { color: var(--muted); font-size: .75rem; }
+.attendance-metrics strong { font-size: .94rem; }
+.attendance-summary-grid strong { font-size: 1.05rem; }
+.attendance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.attendance-limit, .attendance-data-note { margin: 0; color: var(--muted); font-size: .78rem; }
+.attendance-events { display: grid; gap: 8px; }
+.attendance-events h3 { margin: 0; font-size: .92rem; }
+.attendance-events ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.attendance-events li { display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 2px 12px; }
+.attendance-events li span { grid-column: 1 / -1; color: var(--muted); font-size: .78rem; }
+.attendance-events time { color: var(--muted); font-size: .78rem; }
+.attendance-report { display: grid; gap: 14px; }
+.attendance-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.attendance-filters label, .attendance-policy-grid > label { display: grid; gap: 4px; color: var(--muted); font-size: .78rem; }
+.attendance-filters input, .attendance-filters select, .attendance-policy input { font: inherit; }
+.attendance-employee { display: grid; gap: 12px; padding: 13px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.attendance-employee-heading { align-items: center; }
+.attendance-employee-heading .muted { font-size: .8rem; }
+.attendance-table { min-width: 700px; }
+.attendance-table td { vertical-align: top; }
+.attendance-table .attendance-flag { display: table; margin-top: 4px; font-size: .67rem; }
+.attendance-correct, .attendance-resolve { margin: 2px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-elev); color: var(--ink); font: inherit; font-size: .74rem; cursor: pointer; }
+.attendance-policy summary { cursor: pointer; font-weight: 650; }
+.attendance-policy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; padding-top: 12px; }
+.attendance-policy-grid fieldset { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 8px; }
+.attendance-policy-grid legend { color: var(--muted); font-size: .78rem; }
+.attendance-policy-grid .attendance-day { display: inline-flex; align-items: center; gap: 4px; }
+.attendance-policy-grid button { justify-self: start; }
+.attendance-audit { overflow: hidden; }
+.attendance-audit code { overflow-wrap: anywhere; font-size: .75rem; }
+.attendance-empty { padding: 8px 0; }
+
 /* Responsive */
 .task-drawer-panel { width: min(900px, 100%); }
 .td-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; }
@@ -181,4 +236,7 @@ body.drawer-open { overflow: hidden; }
   .drawer-grid, .report-lists { grid-template-columns: 1fr; }
   .task-drawer-panel { width: 100%; padding: 12px; }
   .ws-filters > * { flex: 1 1 140px; }
+  .attendance-events li { grid-template-columns: 1fr; }
+  .attendance-events li span { grid-column: auto; }
+  .attendance-filters, .attendance-filters > label { width: 100%; }
 }
