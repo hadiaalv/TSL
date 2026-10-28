@@ -1,3 +1,6 @@
+import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from pydantic import Field
@@ -90,4 +93,16 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Serverless hosts (Vercel) mount the project read-only; only /tmp is writable.
+if os.environ.get("VERCEL") and not os.environ.get("DATA_DIR"):
+    _src = Path(settings.data_dir)
+    _dst = Path(tempfile.gettempdir()) / "tsl-data"
+    if not _dst.exists():
+        if _src.exists():
+            shutil.copytree(_src, _dst, ignore=shutil.ignore_patterns("backups"))
+        else:
+            _dst.mkdir(parents=True)
+    settings.data_dir = str(_dst)
+
 Path(settings.data_dir).mkdir(parents=True, exist_ok=True)
