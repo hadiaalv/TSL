@@ -1542,6 +1542,12 @@ def attendance_report(
         raise HTTPException(422, str(exc)) from exc
 
 
+@app.get("/api/attendance/today")
+def attendance_today(request: Request) -> dict[str, Any]:
+    auth.require_super_admin(request)
+    return attendance.today_overview()
+
+
 @app.get("/api/attendance/policy")
 def attendance_policy(request: Request) -> dict[str, Any]:
     auth.require_user(request)

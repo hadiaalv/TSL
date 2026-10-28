@@ -556,5 +556,11 @@
       });
   }
 
-  window.TSLAttendance = { start, onRoute };
+  async function sync() {
+    await getStatus();
+    startHeartbeatLoop();
+    if (state.session && state.session.status !== "checked_out") sendHeartbeat();
+  }
+
+  window.TSLAttendance = { start, onRoute, sync };
 })();

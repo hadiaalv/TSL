@@ -781,6 +781,72 @@ def report(
         }
 
 
+def today_overview() -> dict[str, Any]:
+    """Read-only snapshot of who is in the office today, for the Super Admin dashboard."""
+    now = _now()
+    with db.connect() as conn:
+        policy = _policy(conn)
+        zone = ZoneInfo(policy["timezone"])
+        local_now = now.astimezone(zone)
+        local_day = local_now.date()
+        day_start = _stamp(datetime.combine(local_day, time.min, tzinfo=zone))
+        day_end = _stamp(datetime.combine(local_day + timedelta(days=1), time.min, tzinfo=zone))
+        users = conn.execute(
+            "SELECT id, username, display_name FROM users WHERE status = 'active' ORDER BY display_name, username"
+        ).fetchall()
+        sessions = conn.execute(
+            """
+            SELECT * FROM attendance_sessions
+            WHERE checked_in_at < ? AND COALESCE(checked_out_at, '9999-12-31T23:59:59.999999Z') >= ?
+            ORDER BY checked_in_at
+            """,
+            (day_end, day_start),
+        ).fetchall()
+    by_user: dict[str, list[sqlite3.Row]] = {}
+    for session in sessions:
+        by_user.setdefault(session["user_id"], []).append(session)
+    scheduled = local_day.weekday() in policy["working_days"]
+    late_cutoff = datetime.combine(
+        local_day, time.fromisoformat(policy["work_start"]), tzinfo=zone
+    ) + timedelta(minutes=policy["late_grace_minutes"])
+    rows: list[dict[str, Any]] = []
+    for user in users:
+        records = by_user.get(user["id"], [])
+        state = "not_checked_in"
+        first_in = None
+        late = False
+        if records:
+            first_in = records[0]["checked_in_at"]
+            late = scheduled and _parse(first_in).astimezone(zone) > late_cutoff
+            last = records[-1]
+            if last["checked_out_at"]:
+                state = "checked_out"
+            elif (now - _parse(last["last_heartbeat_at"])).total_seconds() <= policy["inactivity_timeout_seconds"]:
+                state = "checked_in"
+            else:
+                state = "paused"
+        rows.append(
+            {
+                "user_id": user["id"],
+                "name": user["display_name"] or user["username"],
+                "state": state,
+                "first_check_in_at": first_in,
+                "late": late,
+            }
+        )
+    counts = {key: sum(row["state"] == key for row in rows) for key in ("checked_in", "paused", "checked_out", "not_checked_in")}
+    return {
+        "date": local_day.isoformat(),
+        "timezone": policy["timezone"],
+        "scheduled_today": scheduled,
+        "total": len(rows),
+        "present": sum(row["state"] != "not_checked_in" for row in rows),
+        "late": sum(row["late"] for row in rows),
+        "counts": counts,
+        "employees": rows,
+    }
+
+
 def add_leave(
     actor_user_id: str, user_id: str, leave_date: str, leave_type: str, reason: str
 ) -> dict[str, Any]:

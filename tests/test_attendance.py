@@ -234,6 +234,19 @@ class OfficeAttendanceTests(unittest.TestCase):
             403,
         )
 
+    def test_today_overview_is_super_admin_only(self):
+        for username in ("attendance-admin", "attendance-worker"):
+            self.client.cookies.clear()
+            self.login(username)
+            self.assertEqual(self.client.get("/api/attendance/today").status_code, 403)
+        self.client.cookies.clear()
+        self.login("attendance-owner")
+        response = self.client.get("/api/attendance/today")
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["counts"]["checked_in"], 0)
+        self.assertGreaterEqual(len(body["employees"]), 4)
+
     def test_leave_allowances_are_counted_per_employee(self):
         self.login("attendance-owner")
         for day, kind in (("2026-10-05", "half"), ("2026-10-06", "half"), ("2026-10-07", "full")):

@@ -9,6 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css?v=20261102-responsive1" />
   <link rel="stylesheet" href="/static/workspace.css?v=20261029-attendance2" />
+  <link rel="stylesheet" href="/static/shell.css?v=20261030-shell3" />
+  <link rel="stylesheet" href="/static/dashboard.css?v=20261030-dash1" />
   <link rel="icon" type="image/png" href="/public/logo.png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
 </head>
@@ -25,42 +27,34 @@
           <div class="brand-sub">Team workspace</div>
         </div>
       </div>
-      <div class="account-card">
-        <div class="account-meta">
-          <span class="account-label">Signed in</span>
-          <strong id="session-user">…</strong>
-        </div>
-        <div class="account-actions">
-          <button id="btn-logout" class="btn-logout" type="button">Log out</button>
-        </div>
-      </div>
 
       <nav class="sidebar-nav" aria-label="Workspace navigation">
-        <a href="#home" data-route="home" class="sidebar-nav-link"><span aria-hidden="true">⌂</span><span>Overview</span></a>
-        <a href="#brands" data-route="brands" class="sidebar-nav-link"><span aria-hidden="true">▦</span><span>Brands</span></a>
-        <a href="#tasks/mine" data-route="tasks/mine" class="sidebar-nav-link"><span aria-hidden="true">☺</span><span>My Tasks</span><em id="count-mine" class="count-badge hidden">0</em></a>
-        <a href="#tasks/all" data-route="tasks/all" class="sidebar-nav-link"><span aria-hidden="true">✓</span><span>All Tasks</span><em id="open-work-count" class="count-badge">0</em></a>
-        <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span aria-hidden="true">♧</span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
+        <p class="nav-label">Workspace</p>
+        <a href="#home" data-route="home" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></span><span>Dashboard</span></a>
+        <a href="#tasks/mine" data-route="tasks/mine" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></svg></span><span>My Tasks</span><em id="count-mine" class="count-badge hidden">0</em></a>
+        <a href="#tasks/all" data-route="tasks/all" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/></svg></span><span>All Tasks</span><em id="open-work-count" class="count-badge">0</em></a>
+        <a href="#brands" data-route="brands" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg></span><span>Brand Boards</span></a>
         <div class="nav-group" id="nav-departments">
           <button type="button" class="nav-group-toggle" id="departments-toggle" aria-expanded="true"><span>Departments</span><span aria-hidden="true">▾</span></button>
           <div id="sidebar-departments" class="nav-group-body"></div>
         </div>
-        <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span aria-hidden="true">⏱</span><span>Time Logs</span></a>
-        <a href="#attendance" data-route="attendance" class="sidebar-nav-link"><span aria-hidden="true">◷</span><span>Office Attendance</span></a>
-        <a href="#reports" data-route="reports" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">▤</span><span>Reports</span></a>
-        <a href="/admin" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">☰</span><span>User Management</span></a>
-        <a href="#deptmgmt" data-route="deptmgmt" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">◫</span><span>Department Management</span></a>
-        <a href="#integrations" data-route="integrations" class="sidebar-nav-link sa-only hidden"><span aria-hidden="true">⚙</span><span>Settings &amp; Integrations</span></a>
-        <details class="nav-more admin-only hidden">
-          <summary>More tools</summary>
-          <a href="#calendar" data-route="calendar" class="sidebar-nav-link"><span aria-hidden="true">▣</span><span>Calendar</span></a>
-          <a href="#ai" data-route="ai" class="sidebar-nav-link"><span aria-hidden="true">✦</span><span>AI Assistant</span></a>
-          <a href="#chat" data-route="chat" class="sidebar-nav-link"><span aria-hidden="true">💬</span><span>Team Chat</span></a>
-          <a href="#approvals" data-route="approvals" class="sidebar-nav-link admin-only hidden"><span aria-hidden="true">☑</span><span>Approvals</span></a>
-        </details>
+        <p class="nav-label">Activity</p>
+        <a href="#approvals" data-route="approvals" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Approvals</span></a>
+        <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
+        <a href="#attendance" data-route="attendance" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg></span><span>Office Attendance</span></a>
+        <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time Logs</span></a>
+        <a href="#calendar" data-route="calendar" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg></span><span>Calendar</span></a>
+        <p class="nav-label">Tools</p>
+        <a href="#ai" data-route="ai" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z"/></svg></span><span>AI Assistant</span></a>
+        <a href="#chat" data-route="chat" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span><span>Team Chat</span></a>
+        <a href="#reports" data-route="reports" class="sidebar-nav-link sa-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/></svg></span><span>Reports</span></a>
+        <p class="nav-label sa-only hidden">Administration</p>
+        <a href="/admin" class="sidebar-nav-link sa-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span>Users &amp; Roles</span></a>
+        <a href="#deptmgmt" data-route="deptmgmt" class="sidebar-nav-link sa-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></svg></span><span>Department Management</span></a>
+        <a href="#integrations" data-route="integrations" class="sidebar-nav-link sa-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg></span><span>Settings &amp; Integrations</span></a>
       </nav>
 
-      <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true">‹</button>
+      <button class="sidebar-collapse-toggle" id="sidebar-collapse-toggle" type="button" aria-label="Collapse sidebar" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg></button>
     </aside>
 
     <main class="main">
@@ -69,19 +63,20 @@
           <div class="page-title">
             <button id="mobile-sidebar-toggle" class="mobile-sidebar-toggle" type="button" aria-label="Open navigation" aria-expanded="false">☰</button>
             <div>
-              <p class="eyebrow">The Social Links</p>
+              <nav class="breadcrumb" aria-label="Breadcrumb"><span>The Social Links</span><span class="breadcrumb-sep" aria-hidden="true">/</span><span id="breadcrumb-current" aria-current="page">Dashboard</span></nav>
               <h1 id="page-title">Overview</h1>
               <p id="home-welcome" class="home-welcome">Your portfolio at a glance</p>
             </div>
           </div>
           <div class="global-search">
+            <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             <input id="global-search" type="search" placeholder="Search brands, tasks, events…  ( / )" autocomplete="off" aria-label="Search everything" />
             <div id="global-search-results" class="global-search-results hidden"></div>
           </div>
           <div class="notification-wrap">
             <button id="notification-toggle" class="notification-toggle" type="button" aria-label="Notifications" aria-expanded="false">
-              <span aria-hidden="true">♧</span>
-              <span>Notifications</span>
+              <svg class="top-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+              <span class="sr-only">Notifications</span>
               <span id="notification-badge" class="notification-badge hidden" aria-label="Unread notifications">0</span>
             </button>
             <section id="notification-panel" class="notification-panel hidden" aria-label="Notification center">
@@ -92,10 +87,25 @@
               <div id="notification-list"></div>
             </section>
           </div>
+          <div class="profile-wrap">
+            <button id="profile-toggle" class="profile-toggle" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
+              <span id="profile-avatar" class="avatar" aria-hidden="true">·</span>
+              <svg class="top-ico chevron-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="profile-menu" class="profile-menu hidden" role="menu">
+              <div class="profile-meta">
+                <span class="account-label">Signed in as</span>
+                <strong id="session-user">…</strong>
+              </div>
+              <button id="btn-logout" class="btn-logout" type="button" role="menuitem">Log out</button>
+            </div>
+          </div>
         </div>
       </header>
 
       <section id="home-view" class="page-view">
+        <div id="dashboard-root" class="dash-root" aria-live="polite"></div>
+        <div class="legacy-home" hidden>
         <section class="dashboard-panel summary-panel">
           <div class="section-heading"><div><span class="eyebrow">At a glance</span><h2>Overview</h2></div><a href="#work" class="text-link">View all work</a></div>
           <div id="work-summary" class="work-summary"><p class="muted">Loading work…</p></div>
@@ -124,6 +134,7 @@
               <button type="button" id="quick-schedule-event" class="admin-only hidden">＋ Schedule event</button>
             </div>
           </section>
+        </div>
         </div>
       </section>
 
@@ -495,6 +506,7 @@
   <script src="/static/emoji.js?v=20261025-emoji"></script>
   <script src="/static/app.js?v=20261029-attendance2"></script>
   <script src="/static/workspace.js?v=20261102-responsive1"></script>
-  <script src="/static/attendance.js?v=20261029-attendance2"></script>
+  <script src="/static/attendance.js?v=20261030-dash1"></script>
+  <script src="/static/dashboard.js?v=20261030-dash1"></script>
 </body>
 </html>

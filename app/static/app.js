@@ -166,7 +166,7 @@ function initSidebarState() {
 }
 
 const PAGES = {
-  home: "Overview", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Attendance", calendar: "Calendar",
+  home: "Dashboard", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Attendance", calendar: "Calendar",
   ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Settings",
   workspace: "Tasks", notifications: "Notifications", reports: "Reports", deptmgmt: "Department Management",
 };
@@ -240,6 +240,8 @@ function applyRouteView(route) {
   $$("[data-route]").forEach((link) => link.classList.toggle("active", link.dataset.route === navView));
   const title = $("#page-title");
   if (title) title.textContent = route.view === "brand" ? (activeBoard?.name || "Brand") : PAGES[route.view];
+  const crumb = $("#breadcrumb-current");
+  if (crumb) crumb.textContent = route.view === "home" ? "Dashboard" : (title?.textContent || "");
   $("#home-welcome")?.classList.toggle("hidden", route.view !== "home");
   document.body.classList.remove("mobile-sidebar-open");
   window.scrollTo(0, 0);
@@ -1451,6 +1453,10 @@ async function refreshSession() {
     const role = roleName ? ` · ${roleName}` : "";
     const el = $("#session-user");
     if (el) el.textContent = label + role;
+    const avatar = $("#profile-avatar");
+    if (avatar) {
+      avatar.textContent = (label.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "?").toUpperCase();
+    }
     const welcome = $("#home-welcome");
     if (welcome) welcome.textContent = label ? `Welcome back, ${label}. Here’s your portfolio at a glance.` : "Your portfolio at a glance";
     window.TSLWorkspace?.onSession(me.user);
@@ -1461,6 +1467,22 @@ async function refreshSession() {
 }
 
 function attachGlobalHandlers() {
+  const profileToggle = $("#profile-toggle");
+  const profileMenu = $("#profile-menu");
+  const setProfileMenu = (open) => {
+    profileMenu?.classList.toggle("hidden", !open);
+    profileToggle?.setAttribute("aria-expanded", String(open));
+  };
+  profileToggle?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setProfileMenu(profileMenu?.classList.contains("hidden"));
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest?.(".profile-wrap")) setProfileMenu(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setProfileMenu(false);
+  });
   $("#brand-search")?.addEventListener("input", renderBrandSurface);
 
   $("#composer")?.addEventListener("submit", (event) => {
@@ -2378,6 +2400,7 @@ async function applyRoute() {
   applyRouteView(route);
   if (route.view === "timelog") loadTimeLog().catch((error) => setStatus(error.message));
   if (route.view === "attendance") window.TSLAttendance?.onRoute();
+  if (route.view === "home") window.TSLDashboard?.onRoute();
   if (route.view === "chat") initSlackView();
   else stopSlackPolling();
   window.TSLWorkspace?.onRoute(route);
