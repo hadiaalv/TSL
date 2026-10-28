@@ -162,7 +162,7 @@
         ${events.length ? `<ol>${events.map((event) => `<li>
           <strong>${esc(event.event_type === "interruption" ? "Tracking interrupted" : event.event_type === "resumed" ? "Tracking resumed" : "Missed check-out")}</strong>
           <time>${esc(dateTime(event.occurred_at))}</time>
-          <span>${esc(event.reason || "Unknown tracking gap")} · ${esc(event.review_status === "resolved" ? "Reviewed" : "Needs review")}</span>
+          <span>${esc(event.reason || "Unknown tracking gap")}${event.review_status !== "informational" ? ` · ${esc(event.review_status === "resolved" ? "Reviewed" : "Needs review")}` : ""}</span>
         </li>`).join("")}</ol>` : emptyRow("No interruptions recorded for this active session.")}</section>
     </section>`;
   }

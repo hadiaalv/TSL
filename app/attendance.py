@@ -77,6 +77,7 @@ def update_policy(
 
     now = _stamp(_now())
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             UPDATE attendance_policy
@@ -299,13 +300,16 @@ def _session_payload(conn: sqlite3.Connection, session: Optional[sqlite3.Row]) -
     ]
     for event in payload["events"]:
         event["details"] = json.loads(event.pop("details_json"))
-        event["review_status"] = "resolved" if event["reviewed_at"] else "needs_review"
+        event["review_status"] = (
+            "resolved" if event["reviewed_at"] else "needs_review"
+        ) if event["event_type"] in ("interruption", "missed_check_out") else "informational"
     return payload
 
 
 def status(user_id: str) -> dict[str, Any]:
     now = _now()
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         policy = _policy(conn)
         session = conn.execute(
             """
@@ -357,6 +361,7 @@ def check_in(user_id: str) -> dict[str, Any]:
     now = _stamp(_now())
     session_id = uuid4().hex
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute(
                 """
@@ -404,6 +409,7 @@ def heartbeat(user_id: str, request_id: str) -> dict[str, Any]:
     now_dt = _now()
     now = _stamp(now_dt)
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         session = conn.execute(
             """
             SELECT * FROM attendance_sessions
@@ -464,6 +470,7 @@ def check_out(user_id: str) -> dict[str, Any]:
     now_dt = _now()
     now = _stamp(now_dt)
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         session = conn.execute(
             """
             SELECT * FROM attendance_sessions
@@ -522,6 +529,8 @@ def report(
     next_month = date(month_start.year + (month_start.month == 12), month_start.month % 12 + 1, 1)
 
     with db.connect() as conn:
+        if user_ids:
+            conn.execute("BEGIN IMMEDIATE")
         policy = _policy(conn)
         zone = ZoneInfo(policy["timezone"])
         users: dict[str, dict[str, Any]] = {}
@@ -741,6 +750,7 @@ def correct_session(
         raise ValueError("Correction reason must be 500 characters or fewer.")
     now = _stamp(_now())
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         session = conn.execute(
             "SELECT * FROM attendance_sessions WHERE id = ?", (session_id,)
         ).fetchone()
@@ -788,6 +798,7 @@ def resolve_event(
         raise ValueError("Resolution note must be 500 characters or fewer.")
     now = _stamp(_now())
     with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         event = conn.execute(
             "SELECT * FROM attendance_events WHERE id = ?", (event_id,)
         ).fetchone()
