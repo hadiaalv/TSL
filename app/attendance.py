@@ -54,7 +54,14 @@ def update_policy(
     overtime_enabled: bool,
     overtime_grace_minutes: int,
     working_days: list[int],
+    allowed_half_leaves: int = 1,
+    allowed_days_off: int = 2,
+    allowed_late_checkins: int = 3,
+    allowed_early_offs: int = 3,
 ) -> dict[str, Any]:
+    for allowance in (allowed_half_leaves, allowed_days_off, allowed_late_checkins, allowed_early_offs):
+        if not 0 <= allowance <= 31:
+            raise ValueError("Monthly allowances must be between 0 and 31")
     try:
         ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -84,7 +91,9 @@ def update_policy(
             SET timezone = ?, heartbeat_interval_seconds = ?,
                 inactivity_timeout_seconds = ?, work_start = ?, work_end = ?,
                 late_grace_minutes = ?, overtime_enabled = ?,
-                overtime_grace_minutes = ?, working_days_json = ?, updated_at = ?
+                overtime_grace_minutes = ?, working_days_json = ?, updated_at = ?,
+                allowed_half_leaves = ?, allowed_days_off = ?,
+                allowed_late_checkins = ?, allowed_early_offs = ?
             WHERE policy_id = 'default'
             """,
             (
@@ -98,6 +107,10 @@ def update_policy(
                 overtime_grace_minutes,
                 json.dumps(sorted(set(working_days))),
                 now,
+                allowed_half_leaves,
+                allowed_days_off,
+                allowed_late_checkins,
+                allowed_early_offs,
             ),
         )
         conn.execute(
@@ -120,6 +133,10 @@ def update_policy(
                         "overtime_enabled": overtime_enabled,
                         "overtime_grace_minutes": overtime_grace_minutes,
                         "working_days": sorted(set(working_days)),
+                        "allowed_half_leaves": allowed_half_leaves,
+                        "allowed_days_off": allowed_days_off,
+                        "allowed_late_checkins": allowed_late_checkins,
+                        "allowed_early_offs": allowed_early_offs,
                     },
                     sort_keys=True,
                 ),
@@ -709,6 +726,30 @@ def report(
             )
             present_days = sum(bool(day["check_ins"] or day["confirmed_seconds"]) for day in daily_rows)
             total_seconds = sum(day["confirmed_seconds"] for day in daily_rows)
+            leaves = [
+                dict(leave)
+                for leave in conn.execute(
+                    """
+                    SELECT id, leave_date, leave_type, reason FROM attendance_leaves
+                    WHERE user_id = ? AND leave_date >= ? AND leave_date < ?
+                    ORDER BY leave_date
+                    """,
+                    (user_id, month_start.isoformat(), next_month.isoformat()),
+                )
+            ]
+            half_taken = sum(leave["leave_type"] == "half" for leave in leaves)
+            days_off_taken = sum(leave["leave_type"] == "full" for leave in leaves)
+            late_taken = sum(day["late_arrival"] for day in daily_rows)
+            early_taken = sum(day["early_departure"] for day in daily_rows)
+            allowances = {
+                "half_leaves": {"allowed": policy["allowed_half_leaves"], "taken": half_taken},
+                "days_off": {"allowed": policy["allowed_days_off"], "taken": days_off_taken},
+                "late_checkins": {"allowed": policy["allowed_late_checkins"], "taken": late_taken},
+                "early_offs": {"allowed": policy["allowed_early_offs"], "taken": early_taken},
+            }
+            for item in allowances.values():
+                item["remaining"] = max(0, item["allowed"] - item["taken"])
+                item["exceeded"] = item["taken"] > item["allowed"]
             output.append(
                 {
                     "user_id": user_id,
@@ -727,6 +768,8 @@ def report(
                     "approved_break_seconds": 0,
                     "overtime_seconds": sum(day["overtime_seconds"] for day in daily_rows),
                     "leave_and_holiday_data_available": False,
+                    "allowances": allowances,
+                    "leaves": leaves,
                     "daily": daily_rows,
                 }
             )
@@ -736,6 +779,77 @@ def report(
             "policy": policy,
             "employees": output,
         }
+
+
+def add_leave(
+    actor_user_id: str, user_id: str, leave_date: str, leave_type: str, reason: str
+) -> dict[str, Any]:
+    if leave_type not in ("half", "full"):
+        raise ValueError("Leave type must be half or full")
+    try:
+        date.fromisoformat(leave_date)
+    except ValueError as exc:
+        raise ValueError("Leave date must use YYYY-MM-DD") from exc
+    leave_id = uuid4().hex
+    now = _stamp(_now())
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            raise ValueError("Employee not found")
+        if conn.execute(
+            "SELECT 1 FROM attendance_leaves WHERE user_id = ? AND leave_date = ?",
+            (user_id, leave_date),
+        ).fetchone():
+            raise ValueError("A leave is already recorded for that date")
+        conn.execute(
+            """
+            INSERT INTO attendance_leaves
+                (id, user_id, leave_date, leave_type, reason, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (leave_id, user_id, leave_date, leave_type, reason.strip(), actor_user_id, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO attendance_audit (id, actor_user_id, action, details_json, created_at)
+            VALUES (?, ?, 'leave_added', ?, ?)
+            """,
+            (
+                uuid4().hex,
+                actor_user_id,
+                json.dumps(
+                    {"leave_id": leave_id, "user_id": user_id, "date": leave_date, "type": leave_type},
+                    sort_keys=True,
+                ),
+                now,
+            ),
+        )
+    return {"id": leave_id, "user_id": user_id, "leave_date": leave_date, "leave_type": leave_type}
+
+
+def delete_leave(actor_user_id: str, leave_id: str) -> None:
+    now = _stamp(_now())
+    with db.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM attendance_leaves WHERE id = ?", (leave_id,)).fetchone()
+        if not row:
+            raise LookupError("Leave not found")
+        conn.execute("DELETE FROM attendance_leaves WHERE id = ?", (leave_id,))
+        conn.execute(
+            """
+            INSERT INTO attendance_audit (id, actor_user_id, action, details_json, created_at)
+            VALUES (?, ?, 'leave_deleted', ?, ?)
+            """,
+            (
+                uuid4().hex,
+                actor_user_id,
+                json.dumps(
+                    {"leave_id": leave_id, "user_id": row["user_id"], "date": row["leave_date"]},
+                    sort_keys=True,
+                ),
+                now,
+            ),
+        )
 
 
 def correct_session(

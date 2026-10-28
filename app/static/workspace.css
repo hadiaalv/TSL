@@ -240,3 +240,7 @@ body.drawer-open { overflow: hidden; }
   .attendance-events li span { grid-column: auto; }
   .attendance-filters, .attendance-filters > label { width: 100%; }
 }
+
+.attendance-allowances { margin-top: 12px; }
+.attendance-over td { color: #b42318; font-weight: 600; }
+.attendance-leave-list { margin: 8px 0; padding-left: 18px; }

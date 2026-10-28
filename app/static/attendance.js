@@ -17,7 +17,7 @@
   };
 
   const isSuperAdmin = () => currentUserRole === "super_admin";
-  const canViewTeam = () => currentUserRole === "admin" || isSuperAdmin();
+  const canViewTeam = () => isSuperAdmin();
   const monthNow = () => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -123,6 +123,10 @@
         <label>Scheduled end<input name="work_end" type="time" value="${esc(state.policy.work_end)}" required /></label>
         <label>Late grace (minutes)<input name="late_grace_minutes" type="number" min="0" max="240" value="${state.policy.late_grace_minutes}" required /></label>
         <label>Overtime grace (minutes)<input name="overtime_grace_minutes" type="number" min="0" max="480" value="${state.policy.overtime_grace_minutes}" required /></label>
+        <label>Allowed half leaves / month<input name="allowed_half_leaves" type="number" min="0" max="31" value="${state.policy.allowed_half_leaves}" required /></label>
+        <label>Allowed days off / month<input name="allowed_days_off" type="number" min="0" max="31" value="${state.policy.allowed_days_off}" required /></label>
+        <label>Allowed late check-ins / month<input name="allowed_late_checkins" type="number" min="0" max="31" value="${state.policy.allowed_late_checkins}" required /></label>
+        <label>Allowed early offs / month<input name="allowed_early_offs" type="number" min="0" max="31" value="${state.policy.allowed_early_offs}" required /></label>
         <label class="attendance-day"><input name="overtime_enabled" type="checkbox"${state.policy.overtime_enabled ? " checked" : ""} />Enable overtime calculation</label>
         <fieldset><legend>Working days</legend>${days.map(([value, name]) => `
           <label class="attendance-day"><input type="checkbox" name="working_days" value="${value}"${state.policy.working_days.includes(Number(value)) ? " checked" : ""} />${name}</label>
@@ -194,6 +198,26 @@
       : "").join(" ");
   }
 
+  const ALLOWANCE_LABELS = [
+    ["half_leaves", "Half leaves"],
+    ["days_off", "Days off"],
+    ["late_checkins", "Late check-ins"],
+    ["early_offs", "Early offs"],
+  ];
+
+  function allowanceMarkup(employee) {
+    const rows = ALLOWANCE_LABELS.map(([key, label]) => {
+      const item = employee.allowances?.[key] || { allowed: 0, taken: 0, remaining: 0, exceeded: false };
+      return `<tr${item.exceeded ? ` class="attendance-over"` : ""}><td>${label}</td><td>${item.allowed}</td><td>${item.taken}</td><td>${item.exceeded ? "Exceeded" : item.remaining}</td></tr>`;
+    }).join("");
+    const leaves = (employee.leaves || []).map((leave) => `<li>${esc(dateLabel(leave.leave_date))} · ${leave.leave_type === "half" ? "Half leave" : "Day off"}${leave.reason ? ` · ${esc(leave.reason)}` : ""}${isSuperAdmin() ? ` <button type="button" class="ghost attendance-leave-delete" data-leave="${esc(leave.id)}">Remove</button>` : ""}</li>`).join("");
+    return `<div class="table-wrap"><table class="ws-table attendance-allowances">
+      <thead><tr><th>Monthly allowance</th><th>Allowed</th><th>Taken</th><th>Remaining</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>
+      ${leaves ? `<ul class="attendance-leave-list">${leaves}</ul>` : ""}
+      ${isSuperAdmin() ? `<button type="button" class="ghost attendance-leave-add" data-user="${esc(employee.user_id)}">Record leave</button>` : ""}`;
+  }
+
   function reportMarkup() {
     const report = state.report;
     const employees = report?.employees || [];
@@ -201,7 +225,7 @@
     return employees.map((employee) => `<section class="attendance-employee">
       <div class="attendance-employee-heading">
         <div><h3>${esc(employee.employee_name)}</h3><span class="muted">${esc(employee.username)} · ${esc(employee.month)}</span></div>
-        <button type="button" class="ghost attendance-export">Export CSV</button>
+        <span><button type="button" class="ghost attendance-export">Export CSV</button>${isSuperAdmin() ? ` <button type="button" class="ghost attendance-print">Print</button>` : ""}</span>
       </div>
       <div class="attendance-summary-grid">
         <div><strong>${employee.days_present}</strong><span>Present</span></div>
@@ -214,7 +238,8 @@
         <div><strong>${employee.missed_check_out_days}</strong><span>Missed check-outs</span></div>
         <div><strong>${esc(hoursText(employee.overtime_seconds))}</strong><span>Overtime</span></div>
       </div>
-      <p class="muted attendance-data-note">Leave, holiday, and approved-break records are unavailable; overtime is calculated only when enabled in policy.</p>
+      ${allowanceMarkup(employee)}
+      <p class="muted attendance-data-note">Holiday and approved-break records are unavailable; overtime is calculated only when enabled in policy.</p>
       <div class="table-wrap"><table class="ws-table attendance-table">
         <thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Confirmed</th><th>Exceptions</th><th>Review</th></tr></thead>
         <tbody>${employee.daily.length ? employee.daily.map((day) => `<tr>
@@ -240,7 +265,7 @@
     ${currentCard()}
     <section class="attendance-report">
       <div class="attendance-report-head"><div><h2>Monthly attendance</h2><p class="muted">Calculated from persisted sessions, active intervals, and authorized corrections.</p></div>
-        <div class="attendance-filters">${reportControls()}</div>
+        <div class="attendance-filters">${reportControls()}${isSuperAdmin() ? `<button type="button" class="ghost" id="attendance-print-all">Print report</button>` : ""}</div>
       </div>
       <div id="attendance-report-body">${reportMarkup()}</div>
     </section>
@@ -263,6 +288,16 @@
     target.querySelector("#attendance-policy-form")?.addEventListener("submit", savePolicy);
     target.querySelectorAll(".attendance-export").forEach((button, index) => {
       button.addEventListener("click", () => exportCsv(state.report.employees[index]));
+    });
+    target.querySelectorAll(".attendance-print").forEach((button, index) => {
+      button.addEventListener("click", () => printReport([state.report.employees[index]]));
+    });
+    target.querySelector("#attendance-print-all")?.addEventListener("click", () => printReport(state.report?.employees || []));
+    target.querySelectorAll(".attendance-leave-add").forEach((button) => {
+      button.addEventListener("click", () => addLeave(button.dataset.user));
+    });
+    target.querySelectorAll(".attendance-leave-delete").forEach((button) => {
+      button.addEventListener("click", () => deleteLeave(button.dataset.leave));
     });
     target.querySelectorAll(".attendance-correct").forEach((button) => {
       button.addEventListener("click", () => correctSession(button.dataset.session));
@@ -340,6 +375,10 @@
       overtime_enabled: values.has("overtime_enabled"),
       overtime_grace_minutes: Number(values.get("overtime_grace_minutes")),
       working_days: values.getAll("working_days").map(Number),
+      allowed_half_leaves: Number(values.get("allowed_half_leaves")),
+      allowed_days_off: Number(values.get("allowed_days_off")),
+      allowed_late_checkins: Number(values.get("allowed_late_checkins")),
+      allowed_early_offs: Number(values.get("allowed_early_offs")),
     };
     try {
       state.policy = await api("/api/attendance/policy", { method: "PUT", body: JSON.stringify(payload) });
@@ -395,6 +434,65 @@
       <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
       <tbody>${items.map((item) => `<tr><td>${esc(dateTime(item.created_at))}</td><td>${esc(item.display_name || item.username)}</td><td>${esc(item.action)}</td><td><code>${esc(JSON.stringify(item.details))}</code></td></tr>`).join("")}</tbody>
     </table></div>` : emptyRow("No attendance audit events yet.");
+  }
+
+  async function addLeave(userId) {
+    const date = window.prompt("Leave date (YYYY-MM-DD):", `${state.month || monthNow()}-01`);
+    if (!date) return;
+    const type = (window.prompt("Type: half or full (day off)", "half") || "").trim().toLowerCase();
+    if (!type) return;
+    const reason = window.prompt("Reason (optional):") || "";
+    try {
+      await api("/api/attendance/leaves", {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId, leave_date: date.trim(), leave_type: type, reason }),
+      });
+      await reloadReport();
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  }
+
+  async function deleteLeave(leaveId) {
+    if (!window.confirm("Remove this leave record?")) return;
+    try {
+      await api(`/api/attendance/leaves/${encodeURIComponent(leaveId)}`, { method: "DELETE" });
+      await reloadReport();
+    } catch (error) {
+      state.error = error.message;
+      render();
+    }
+  }
+
+  function printReport(employees) {
+    if (!isSuperAdmin() || !employees.length) return;
+    const win = window.open("", "_blank");
+    if (!win) {
+      state.error = "Allow pop-ups to print the report.";
+      render();
+      return;
+    }
+    const sections = employees.map((employee) => `<section>
+      <h2>${esc(employee.employee_name)} <small>(${esc(employee.username)}) · ${esc(employee.month)}</small></h2>
+      <p>Present: ${employee.days_present} · Absent: ${employee.days_absent} · Scheduled: ${employee.scheduled_working_days} · Confirmed office time: ${esc(hoursText(employee.confirmed_seconds))} · Overtime: ${esc(hoursText(employee.overtime_seconds))}</p>
+      <table><thead><tr><th>Monthly allowance</th><th>Allowed</th><th>Taken</th><th>Remaining</th></tr></thead><tbody>
+        ${ALLOWANCE_LABELS.map(([key, label]) => {
+          const item = employee.allowances[key];
+          return `<tr><td>${label}</td><td>${item.allowed}</td><td>${item.taken}</td><td>${item.exceeded ? "Exceeded" : item.remaining}</td></tr>`;
+        }).join("")}
+      </tbody></table>
+      <table><thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Confirmed</th><th>Flags</th></tr></thead><tbody>
+        ${employee.daily.map((day) => `<tr><td>${esc(dateLabel(day.date))}</td><td>${esc((day.check_ins || []).map(dateTime).join(", ") || "—")}</td><td>${esc((day.check_outs || []).map(dateTime).join(", ") || "—")}</td><td>${esc(hoursText(day.confirmed_seconds))}</td><td>${[day.late_arrival ? "Late" : "", day.early_departure ? "Early off" : "", day.missed_check_out ? "Missed check-out" : ""].filter(Boolean).join(", ") || "—"}</td></tr>`).join("")}
+      </tbody></table>
+    </section>`).join("");
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Attendance report ${esc(state.report.month)}</title>
+      <style>body{font:13px system-ui,sans-serif;margin:24px;color:#111}h1{font-size:20px}h2{font-size:16px;margin:20px 0 6px}small{font-weight:400;color:#555}
+      table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border:1px solid #bbb;padding:4px 8px;text-align:left}th{background:#eee}section{page-break-after:always}section:last-child{page-break-after:auto}</style>
+      </head><body><h1>Attendance report · ${esc(state.report.month)}</h1><p>Timezone: ${esc(state.report.timezone)}</p>${sections}</body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
   }
 
   function csvCell(value) {

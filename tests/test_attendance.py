@@ -197,11 +197,22 @@ class OfficeAttendanceTests(unittest.TestCase):
                 "department_id": self.department["id"],
             },
         )
-        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertEqual(allowed.status_code, 403, allowed.text)
         self.assertEqual(
             self.client.get(
                 "/api/attendance/report",
-                params={"month": "2026-10", "user_id": self.other["id"]},
+                params={"month": "2026-10", "user_id": self.operator["id"]},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/attendance/report", params={"month": "2026-10"}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/attendance/leaves",
+                json={"user_id": self.operator["id"], "leave_date": "2026-10-05", "leave_type": "half"},
             ).status_code,
             403,
         )
@@ -222,6 +233,34 @@ class OfficeAttendanceTests(unittest.TestCase):
             ).status_code,
             403,
         )
+
+    def test_leave_allowances_are_counted_per_employee(self):
+        self.login("attendance-owner")
+        for day, kind in (("2026-10-05", "half"), ("2026-10-06", "half"), ("2026-10-07", "full")):
+            response = self.client.post(
+                "/api/attendance/leaves",
+                json={"user_id": self.operator["id"], "leave_date": day, "leave_type": kind},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+        duplicate = self.client.post(
+            "/api/attendance/leaves",
+            json={"user_id": self.operator["id"], "leave_date": "2026-10-05", "leave_type": "full"},
+        )
+        self.assertEqual(duplicate.status_code, 422)
+        report = self.client.get(
+            "/api/attendance/report",
+            params={"month": "2026-10", "user_id": self.operator["id"]},
+        ).json()
+        allowances = report["employees"][0]["allowances"]
+        self.assertEqual(allowances["half_leaves"]["taken"], 2)
+        self.assertTrue(allowances["half_leaves"]["exceeded"])
+        self.assertEqual(allowances["half_leaves"]["allowed"], 1)
+        self.assertEqual(allowances["days_off"]["taken"], 1)
+        other = self.client.get(
+            "/api/attendance/report",
+            params={"month": "2026-10", "user_id": self.admin["id"]},
+        ).json()
+        self.assertEqual(other["employees"][0]["allowances"]["half_leaves"]["taken"], 0)
 
     def test_super_admin_correction_requires_reason_and_is_audited(self):
         with patch("app.attendance._now", return_value=self.start):

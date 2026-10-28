@@ -491,6 +491,31 @@ def _migrate_attendance(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE attendance_policy ADD COLUMN overtime_grace_minutes INTEGER NOT NULL DEFAULT 30"
         )
+    for column, default in (
+        ("allowed_half_leaves", 1),
+        ("allowed_days_off", 2),
+        ("allowed_late_checkins", 3),
+        ("allowed_early_offs", 3),
+    ):
+        if column not in existing_policy_cols:
+            conn.execute(
+                f"ALTER TABLE attendance_policy ADD COLUMN {column} INTEGER NOT NULL DEFAULT {default}"
+            )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS attendance_leaves (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            leave_date TEXT NOT NULL,
+            leave_type TEXT NOT NULL CHECK (leave_type IN ('half', 'full')),
+            reason TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_leave_day
+            ON attendance_leaves(user_id, leave_date);
+        """
+    )
     conn.execute(
         """
         INSERT OR IGNORE INTO attendance_policy (policy_id, updated_at)
