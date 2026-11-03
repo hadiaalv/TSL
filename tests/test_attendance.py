@@ -46,39 +46,43 @@ class OfficeAttendanceTests(unittest.TestCase):
     def at(self, minutes):
         return self.start + timedelta(minutes=minutes)
 
-    def test_check_in_heartbeat_gap_resume_and_check_out_only_count_confirmed_intervals(self):
+    def test_sleep_or_closed_browser_never_pauses_and_duration_uses_server_timestamps(self):
         with patch("app.attendance._now", return_value=self.start):
             session = attendance.check_in(self.operator["id"])
         self.assertEqual(session["status"], "checked_in")
 
-        with patch("app.attendance._now", return_value=self.at(2)):
-            heartbeat = attendance.heartbeat(self.operator["id"], "heartbeataaaaaaaa")
-        self.assertEqual(heartbeat["confirmed_seconds"], 120)
-
         with patch("app.attendance._now", return_value=self.at(4)):
-            heartbeat = attendance.heartbeat(self.operator["id"], "heartbeatsecond01")
-        self.assertEqual(heartbeat["confirmed_seconds"], 240)
+            attendance.heartbeat(self.operator["id"], "heartbeatsecond01")
 
-        with patch("app.attendance._now", return_value=self.at(8)):
-            paused = attendance.status(self.operator["id"])["session"]
-        self.assertEqual(paused["status"], "paused")
-        self.assertEqual(paused["confirmed_seconds"], 240)
-        self.assertIn("unknown_tracking_gap", [event["reason"] for event in paused["events"]])
+        # No heartbeats for hours (sleep / shutdown): the session is still running.
+        with patch("app.attendance._now", return_value=self.at(180)):
+            active = attendance.status(self.operator["id"])["session"]
+        self.assertEqual(active["status"], "checked_in")
+        self.assertEqual(active["confirmed_seconds"], 180 * 60)
 
-        with patch("app.attendance._now", return_value=self.at(53)):
-            resumed = attendance.heartbeat(self.operator["id"], "heartbeatbbbbbbbb")
-        self.assertEqual(resumed["status"], "checked_in")
-        self.assertEqual(resumed["confirmed_seconds"], 240)
-
-        with patch("app.attendance._now", return_value=self.at(55)):
-            updated = attendance.heartbeat(self.operator["id"], "heartbeatcccccccc")
-        self.assertEqual(updated["confirmed_seconds"], 360)
-
-        with patch("app.attendance._now", return_value=self.at(57)):
+        with patch("app.attendance._now", return_value=self.at(480)):
             checked_out = attendance.check_out(self.operator["id"])
         self.assertEqual(checked_out["status"], "checked_out")
-        self.assertEqual(checked_out["confirmed_seconds"], 480)
-        self.assertEqual(len(checked_out["intervals"]), 2)
+        self.assertEqual(checked_out["confirmed_seconds"], 8 * 3600)
+        self.assertEqual(checked_out["checked_out_at"], attendance._stamp(self.at(480)))
+
+        with patch("app.attendance._now", return_value=self.at(481)):
+            with self.assertRaisesRegex(ValueError, "no active attendance session"):
+                attendance.check_out(self.operator["id"])
+
+    def test_sessions_paused_by_the_old_gap_logic_are_resumed(self):
+        with patch("app.attendance._now", return_value=self.start):
+            session = attendance.check_in(self.operator["id"])
+        with db.connect() as conn:
+            conn.execute("UPDATE attendance_sessions SET status = 'paused' WHERE id = ?", (session["id"],))
+            conn.execute(
+                "UPDATE attendance_intervals SET ended_at = ? WHERE session_id = ?",
+                (attendance._stamp(self.at(5)), session["id"]),
+            )
+        with patch("app.attendance._now", return_value=self.at(60)):
+            current = attendance.status(self.operator["id"])["session"]
+        self.assertEqual(current["status"], "checked_in")
+        self.assertEqual(current["confirmed_seconds"], 3600)
 
     def test_duplicate_check_in_is_rejected_and_heartbeat_request_is_idempotent(self):
         with patch("app.attendance._now", return_value=self.start):
@@ -92,7 +96,6 @@ class OfficeAttendanceTests(unittest.TestCase):
         with patch("app.attendance._now", return_value=self.at(2)):
             retry = attendance.heartbeat(self.operator["id"], request_id)
         self.assertEqual(first["last_heartbeat_at"], retry["last_heartbeat_at"])
-        self.assertEqual(first["confirmed_seconds"], retry["confirmed_seconds"])
 
     def test_monthly_report_uses_policy_timezone_and_persisted_intervals(self):
         with patch("app.attendance._now", return_value=self.start):
@@ -139,7 +142,7 @@ class OfficeAttendanceTests(unittest.TestCase):
         with patch("app.attendance._now", return_value=self.start + timedelta(days=1)):
             paused = attendance.status(self.operator["id"])["session"]
         event_types = [event["event_type"] for event in paused["events"]]
-        self.assertEqual(paused["status"], "paused")
+        self.assertEqual(paused["status"], "checked_in")
         self.assertIn("missed_check_out", event_types)
         report = attendance.report("2026-10", [self.operator["id"]])
         self.assertEqual(report["employees"][0]["missed_check_out_days"], 1)
@@ -337,3 +340,125 @@ class OfficeAttendanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DepartmentLeadTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.old_data_dir = settings.data_dir
+        settings.data_dir = self.temp_dir.name
+        db.init_db()
+        self.sa = db.create_user("lead-owner", hash_password("test-password"), role="super_admin")
+        self.lead = db.create_user("lead-one", hash_password("test-password"))
+        self.lead2 = db.create_user("lead-two", hash_password("test-password"))
+        self.member = db.create_user("lead-member", hash_password("test-password"))
+        self.outsider = db.create_user("lead-outsider", hash_password("test-password"))
+        self.dept, self.other_dept = db.list_departments()[:2]
+        for user in (self.lead, self.lead2, self.member):
+            db.add_department_member(self.dept["id"], user["id"], self.sa["id"])
+        db.add_department_member(self.other_dept["id"], self.outsider["id"], self.sa["id"])
+        self.client = TestClient(app, base_url="https://testserver")
+
+    def tearDown(self):
+        settings.data_dir = self.old_data_dir
+        self.temp_dir.cleanup()
+
+    def login(self, username):
+        response = self.client.post(
+            "/api/auth/login", json={"username": username, "password": "test-password"}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_only_super_admin_assigns_and_only_department_members_qualify(self):
+        path = f"/api/departments/{self.dept['id']}/lead"
+        self.login("lead-one")
+        self.assertEqual(self.client.put(path, json={"user_id": self.lead["id"]}).status_code, 403)
+
+        self.login("lead-owner")
+        self.assertEqual(self.client.put(path, json={"user_id": self.outsider["id"]}).status_code, 400)
+        ok = self.client.put(path, json={"user_id": self.lead["id"]})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        listed = {d["id"]: d for d in self.client.get("/api/departments").json()}
+        self.assertEqual(listed[self.dept["id"]]["lead_user_id"], self.lead["id"])
+        self.assertTrue(listed[self.dept["id"]]["lead_name"])
+
+    def test_lead_sees_own_department_only_and_changing_lead_moves_access(self):
+        db.set_department_lead(self.dept["id"], self.lead["id"])
+        with patch("app.attendance._now", return_value=datetime.now(timezone.utc) - timedelta(hours=2)):
+            attendance.check_in(self.member["id"])
+
+        self.login("lead-one")
+        me = self.client.get("/api/auth/me").json()["user"]
+        self.assertEqual(me["led_department_ids"], [self.dept["id"]])
+        overview = self.client.get("/api/attendance/overview")
+        self.assertEqual(overview.status_code, 200, overview.text)
+        body = overview.json()
+        self.assertEqual([d["id"] for d in body["departments"]], [self.dept["id"]])
+        states = {m["id"]: m["state"] for m in body["departments"][0]["members"]}
+        self.assertEqual(states[self.member["id"]], "checked_in")
+        self.assertNotIn(self.outsider["id"], states)
+
+        self.assertEqual(
+            self.client.get("/api/attendance/overview", params={"department_id": self.other_dept["id"]}).status_code, 403
+        )
+        report = self.client.get(
+            "/api/attendance/report",
+            params={"month": datetime.now(timezone.utc).strftime("%Y-%m"), "user_id": "all", "department_id": self.dept["id"]},
+        )
+        self.assertEqual(report.status_code, 200, report.text)
+        self.assertEqual(
+            self.client.get(
+                "/api/attendance/report",
+                params={"month": "2026-10", "user_id": self.outsider["id"], "department_id": self.dept["id"]},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(
+                "/api/attendance/report",
+                params={"month": "2026-10", "user_id": "all", "department_id": self.other_dept["id"]},
+            ).status_code,
+            403,
+        )
+        window = {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+        self.assertEqual(
+            self.client.get("/api/time/report", params={**window, "user_id": self.member["id"], "department_id": self.dept["id"]}).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.get("/api/time/report", params={**window, "user_id": self.outsider["id"], "department_id": self.dept["id"]}).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get("/api/time/report", params={**window, "user_id": self.member["id"]}).status_code,
+            403,
+        )
+        self.assertEqual(self.client.get("/api/admin/users").status_code, 403)
+        self.assertEqual(
+            self.client.put(f"/api/departments/{self.dept['id']}/lead", json={"user_id": None}).status_code, 403
+        )
+        self.assertEqual(
+            self.client.post("/api/attendance/sessions/x/corrections", json={"delta_seconds": 60, "reason": "no"}).status_code,
+            403,
+        )
+
+        db.set_department_lead(self.dept["id"], self.lead2["id"])
+        self.assertEqual(self.client.get("/api/attendance/overview").status_code, 403)
+        self.login("lead-two")
+        self.assertEqual(self.client.get("/api/attendance/overview").status_code, 200)
+
+    def test_removing_the_lead_or_their_membership_clears_access(self):
+        db.set_department_lead(self.dept["id"], self.lead["id"])
+        db.remove_department_member(self.dept["id"], self.lead["id"])
+        self.assertEqual(db.led_department_ids(self.lead["id"]), [])
+        db.set_department_lead(self.dept["id"], self.lead2["id"])
+        db.set_department_lead(self.dept["id"], None)
+        self.assertEqual(db.led_department_ids(self.lead2["id"]), [])
+
+    def test_regular_employee_and_super_admin_overview(self):
+        self.login("lead-member")
+        self.assertEqual(self.client.get("/api/attendance/overview").status_code, 403)
+        self.login("lead-owner")
+        body = self.client.get("/api/attendance/overview").json()
+        self.assertGreaterEqual(len(body["departments"]), 2)
+

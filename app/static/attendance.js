@@ -14,10 +14,17 @@
     departmentId: "",
     error: "",
     heartbeatTimer: null,
+    ledDepartmentIds: [],
+    overview: null,
+    clockOffsetMs: 0,
+    tickTimer: null,
   };
 
   const isSuperAdmin = () => currentUserRole === "super_admin";
-  const canViewTeam = () => isSuperAdmin();
+  const isLead = () => !isSuperAdmin() && state.ledDepartmentIds.length > 0;
+  const canViewTeam = () => isSuperAdmin() || isLead();
+  const serverNow = () => Date.now() + state.clockOffsetMs;
+  const elapsedSince = (value) => Math.max(0, Math.floor((serverNow() - new Date(value).getTime()) / 1000));
   const monthNow = () => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -53,6 +60,7 @@
     state.session = response.session;
     state.policy = response.policy;
     state.todaySeconds = response.today_confirmed_seconds || 0;
+    if (response.server_time) state.clockOffsetMs = new Date(response.server_time).getTime() - Date.now();
     return response;
   }
 
@@ -88,18 +96,62 @@
     if (canViewTeam()) {
       query.set("user_id", state.userId || "all");
       if (state.departmentId) query.set("department_id", state.departmentId);
+      else if (isLead()) query.set("department_id", state.ledDepartmentIds[0]);
     }
     state.report = await api(`/api/attendance/report?${query}`);
   }
 
   async function loadOptions() {
+    const me = await api("/api/auth/me");
+    state.ledDepartmentIds = me.user?.led_department_ids || [];
     if (!canViewTeam()) return;
     const [members, departments] = await Promise.all([
       api("/api/team/members"),
       api("/api/departments"),
     ]);
-    state.members = members;
-    state.departments = departments;
+    state.departments = isLead() ? departments.filter((d) => state.ledDepartmentIds.includes(d.id)) : departments;
+    if (isLead()) {
+      if (!state.departmentId || !state.ledDepartmentIds.includes(state.departmentId)) state.departmentId = state.ledDepartmentIds[0];
+      state.members = await api(`/api/departments/${encodeURIComponent(state.departmentId)}/members`);
+    } else {
+      state.members = members;
+    }
+    state.overview = await api("/api/attendance/overview");
+  }
+
+  function overviewMarkup() {
+    if (!canViewTeam() || !state.overview) return "";
+    const counts = state.overview.counts;
+    const stateText = { checked_in: "Checked In", checked_out: "Checked Out", not_checked_in: "Not checked in" };
+    const task = (t) => `<li><strong>${esc(t.title)}</strong> <span class="attendance-flag">${esc(t.status)}${t.running ? " · running" : ""}</span> <span class="muted">${esc(hoursText(t.tracked_seconds))} recorded</span>${t.description ? `<br /><span class="muted">${esc(String(t.description).slice(0, 200))}</span>` : ""}</li>`;
+    const departments = state.overview.departments.map((dept) => `<section class="attendance-employee">
+      <div class="attendance-employee-heading"><div><h3>${esc(dept.name)}</h3><span class="muted">${dept.members.length} employees</span></div></div>
+      <div class="table-wrap"><table class="ws-table attendance-table">
+        <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Check-in</th><th>Check-out</th><th>Total today</th><th>Elapsed (active)</th><th>Task time today</th></tr></thead>
+        <tbody>${dept.members.map((m) => `<tr>
+          <td>${esc(m.name)}${dept.lead_user_id === m.id ? ` <span class="attendance-flag">Lead</span>` : ""}</td>
+          <td>${esc(dept.name)}</td>
+          <td><span class="attendance-state state-${esc(m.state.replace(/_/g, "-"))}">${esc(stateText[m.state])}</span></td>
+          <td>${esc(dateTime(m.check_in_at))}</td>
+          <td>${esc(dateTime(m.check_out_at))}</td>
+          <td>${esc(hoursText(m.total_seconds))}</td>
+          <td>${m.active_since ? `<span data-since="${esc(m.active_since)}">${esc(hoursText(elapsedSince(m.active_since)))}</span>` : "—"}</td>
+          <td>${esc(hoursText(m.task_seconds_today))}</td>
+        </tr>${m.tasks.length ? `<tr><td colspan="8"><details><summary>Tasks and work history (${m.tasks.length})</summary><ul class="attendance-leave-list">${m.tasks.map(task).join("")}</ul></details></td></tr>` : ""}`).join("") || `<tr><td colspan="8">${emptyRow("No employees in this department.")}</td></tr>`}</tbody>
+      </table></div></section>`).join("");
+    return `<section class="attendance-report">
+      <div class="attendance-report-head"><div><h2>${isSuperAdmin() ? "All departments" : "Department overview"} · today</h2>
+        <p class="muted">${counts.checked_in} checked in · ${counts.checked_out} checked out · ${counts.not_checked_in} not checked in</p></div></div>
+      ${departments || emptyRow("No departments to show.")}</section>`;
+  }
+
+  function startTicker() {
+    if (state.tickTimer) return;
+    state.tickTimer = window.setInterval(() => {
+      document.querySelectorAll("#attendance-root [data-since]").forEach((el) => {
+        el.textContent = hoursText(elapsedSince(el.dataset.since));
+      });
+    }, 1000);
   }
 
   function policyMarkup() {
@@ -150,7 +202,7 @@
       </div>
       <div class="attendance-metrics">
         <div><span>Check-in</span><strong>${esc(dateTime(session?.checked_in_at))}</strong></div>
-        <div><span>Session confirmed</span><strong>${esc(hoursText(session?.confirmed_seconds))}</strong></div>
+        <div><span>${isActive ? "Elapsed (running)" : "Total duration"}</span><strong>${isActive ? `<span data-since="${esc(session.checked_in_at)}">${esc(hoursText(elapsedSince(session.checked_in_at)))}</span>` : esc(hoursText(session?.confirmed_seconds))}</strong></div>
         <div><span>Confirmed today</span><strong>${esc(hoursText(state.todaySeconds))}</strong></div>
         <div><span>Check-out</span><strong>${esc(dateTime(session?.checked_out_at))}</strong></div>
       </div>
@@ -161,7 +213,7 @@
         <span class="muted">Server time · ${esc(state.policy?.timezone || "Asia/Karachi")}</span>
       </div>
       ${state.error ? `<p class="form-error" role="alert">${esc(state.error)}</p>` : ""}
-      <p class="attendance-limit">${esc(state.trackingLimit || "Browser heartbeat tracking can detect gaps, but cannot prove computer sleep or physical office presence.")}</p>
+      <p class="attendance-limit">${esc(state.trackingLimit || "Duration is calculated on the server; closing the browser or sleeping the computer never ends a session.")}</p>
       <section class="attendance-events"><h3>Pause and resume history</h3>
         ${events.length ? `<ol>${events.map((event) => `<li>
           <strong>${esc(event.event_type === "interruption" ? "Tracking interrupted" : event.event_type === "resumed" ? "Tracking resumed" : "Missed check-out")}</strong>
@@ -181,7 +233,7 @@
         ${state.members.map((member) => `<option value="${esc(member.id)}"${state.userId === member.id ? " selected" : ""}>${esc(member.display_name)}</option>`).join("")}
       </select></label>
       <label>Department<select id="attendance-department">
-        <option value="">All authorized departments</option>
+        ${isLead() ? "" : `<option value="">All authorized departments</option>`}
         ${state.departments.map((dept) => `<option value="${esc(dept.id)}"${state.departmentId === dept.id ? " selected" : ""}>${esc(dept.name)}</option>`).join("")}
       </select></label>`;
   }
@@ -259,10 +311,11 @@
     if (!target) return;
     target.innerHTML = `<div class="ws-head attendance-head">
       <div><span class="eyebrow">Separate from task time logs</span><h2>Office Attendance</h2>
-        <p class="muted">Check in when you arrive. Only server-confirmed active intervals are included.</p></div>
+        <p class="muted">Check in when you arrive. Time keeps running until you explicitly check out, even if you close the browser or shut down.</p></div>
       ${policyMarkup()}
     </div>
     ${currentCard()}
+    ${overviewMarkup()}
     <section class="attendance-report">
       <div class="attendance-report-head"><div><h2>Monthly attendance</h2><p class="muted">Calculated from persisted sessions, active intervals, and authorized corrections.</p></div>
         <div class="attendance-filters">${reportControls()}${isSuperAdmin() ? `<button type="button" class="ghost" id="attendance-print-all">Print report</button>` : ""}</div>
@@ -282,7 +335,8 @@
     });
     target.querySelector("#attendance-department")?.addEventListener("change", async (event) => {
       state.departmentId = event.target.value;
-      if (currentUserRole === "admin") state.userId = "all";
+      state.userId = "all";
+      if (isLead()) state.members = await api(`/api/departments/${encodeURIComponent(state.departmentId)}/members`);
       await reloadReport();
     });
     target.querySelector("#attendance-policy-form")?.addEventListener("submit", savePolicy);
@@ -326,6 +380,7 @@
     await loadOptions();
     await loadReport();
     render();
+    startTicker();
     if (isSuperAdmin()) loadAudit().catch((error) => { state.error = error.message; });
   }
 

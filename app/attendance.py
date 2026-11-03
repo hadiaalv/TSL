@@ -228,35 +228,26 @@ def _record_missed_checkout(
 
 
 def _reconcile(conn: sqlite3.Connection, session: sqlite3.Row, now: datetime) -> sqlite3.Row:
+    """Sessions only end on an explicit check-out; sleep/offline gaps never pause them."""
     policy = _policy(conn)
-    if session["status"] == "checked_in":
-        last_heartbeat = _parse(session["last_heartbeat_at"])
-        if (now - last_heartbeat).total_seconds() > policy["inactivity_timeout_seconds"]:
-            boundary = session["last_heartbeat_at"]
-            conn.execute(
-                """
-                UPDATE attendance_intervals SET ended_at = ?
-                WHERE session_id = ? AND ended_at IS NULL
-                """,
-                (boundary, session["id"]),
+    if session["status"] == "paused":
+        # Heal sessions paused by the old heartbeat-gap logic: time keeps running.
+        conn.execute(
+            """
+            UPDATE attendance_intervals SET ended_at = NULL
+            WHERE id = (
+                SELECT id FROM attendance_intervals
+                WHERE session_id = ? ORDER BY started_at DESC LIMIT 1
+            ) AND NOT EXISTS (
+                SELECT 1 FROM attendance_intervals WHERE session_id = ? AND ended_at IS NULL
             )
-            conn.execute(
-                """
-                UPDATE attendance_sessions
-                SET status = 'paused', updated_at = ?
-                WHERE id = ? AND status = 'checked_in'
-                """,
-                (_stamp(now), session["id"]),
-            )
-            _add_event(
-                conn,
-                session["id"],
-                "interruption",
-                f"gap:{boundary}",
-                boundary,
-                "unknown_tracking_gap",
-                {"last_confirmed_at": boundary, "observed_again_at": _stamp(now)},
-            )
+            """,
+            (session["id"], session["id"]),
+        )
+        conn.execute(
+            "UPDATE attendance_sessions SET status = 'checked_in', updated_at = ? WHERE id = ?",
+            (_stamp(now), session["id"]),
+        )
     _record_missed_checkout(conn, session["id"], now, policy)
     return conn.execute(
         "SELECT * FROM attendance_sessions WHERE id = ?", (session["id"],)
@@ -274,7 +265,7 @@ def _duration_seconds(conn: sqlite3.Connection, session_id: str) -> int:
         SELECT started_at, COALESCE(ended_at, ?) AS confirmed_until
         FROM attendance_intervals WHERE session_id = ?
         """,
-        (session["last_heartbeat_at"], session_id),
+        (_stamp(_now()), session_id),
     ).fetchall()
     return sum(
         max(0, int((_parse(row["confirmed_until"]) - _parse(row["started_at"])).total_seconds()))
@@ -366,10 +357,10 @@ def status(user_id: str) -> dict[str, Any]:
         "today_confirmed_seconds": today_row["confirmed_seconds"] if today_row else 0,
         "policy": policy,
         "server_time": _stamp(now),
-        "tracking_mode": "browser_heartbeat",
+        "tracking_mode": "server_timestamps",
         "tracking_limit": (
-            "Browser heartbeats detect tracking gaps but cannot reliably confirm "
-            "operating-system sleep or physical office presence."
+            "Duration is calculated on the server from check-in and check-out "
+            "timestamps; closing the browser or sleeping the computer never ends a session."
         ),
     }
 
@@ -643,7 +634,7 @@ def report(
                 for interval in intervals:
                     start = max(_parse(interval["started_at"]), month_start_dt)
                     end = min(
-                        _parse(interval["ended_at"]) if interval["ended_at"] else _parse(session["last_heartbeat_at"]),
+                        _parse(interval["ended_at"]) if interval["ended_at"] else _now(),
                         month_end_dt,
                     )
                     if end <= start:
@@ -821,10 +812,8 @@ def today_overview() -> dict[str, Any]:
             last = records[-1]
             if last["checked_out_at"]:
                 state = "checked_out"
-            elif (now - _parse(last["last_heartbeat_at"])).total_seconds() <= policy["inactivity_timeout_seconds"]:
-                state = "checked_in"
             else:
-                state = "paused"
+                state = "checked_in"
         rows.append(
             {
                 "user_id": user["id"],
@@ -844,6 +833,86 @@ def today_overview() -> dict[str, Any]:
         "late": sum(row["late"] for row in rows),
         "counts": counts,
         "employees": rows,
+    }
+
+
+def department_overview(department_ids: list[str]) -> dict[str, Any]:
+    """Today's attendance and task activity for every active member of the given departments.
+
+    Authorisation is the caller's job; this only reads the departments it is given.
+    """
+    now = _now()
+    with db.connect() as conn:
+        policy = _policy(conn)
+        zone = ZoneInfo(policy["timezone"])
+        local_now = now.astimezone(zone)
+        today_key = local_now.date().isoformat()
+        departments: list[dict[str, Any]] = []
+        member_ids: set[str] = set()
+        for department_id in department_ids:
+            department = conn.execute(
+                "SELECT id, name, lead_user_id FROM departments WHERE id = ?", (department_id,)
+            ).fetchone()
+            if not department:
+                continue
+            members = conn.execute(
+                """
+                SELECT u.id, u.username, COALESCE(NULLIF(u.display_name, ''), u.username) AS name
+                FROM department_members m JOIN users u ON u.id = m.user_id
+                WHERE m.department_id = ? AND u.status = 'active'
+                ORDER BY name COLLATE NOCASE
+                """,
+                (department_id,),
+            ).fetchall()
+            member_ids.update(row["id"] for row in members)
+            departments.append({**dict(department), "members": [dict(row) for row in members]})
+        open_sessions: dict[str, sqlite3.Row] = {}
+        if member_ids:
+            marks = ",".join("?" for _ in member_ids)
+            open_sessions = {
+                row["user_id"]: row
+                for row in conn.execute(
+                    f"SELECT * FROM attendance_sessions WHERE checked_out_at IS NULL AND user_id IN ({marks})",
+                    list(member_ids),
+                )
+            }
+    daily: dict[str, dict[str, Any]] = {}
+    if member_ids:
+        for employee in report(local_now.strftime("%Y-%m"), sorted(member_ids))["employees"]:
+            row = next((d for d in employee["daily"] if d["date"] == today_key), None)
+            daily[employee["user_id"]] = row or {}
+    day_start = _stamp(datetime.combine(local_now.date(), time.min, tzinfo=zone).astimezone(timezone.utc))
+    activity = db.member_task_activity(sorted(member_ids), department_ids, day_start)
+    counts = {"checked_in": 0, "checked_out": 0, "not_checked_in": 0}
+    for department in departments:
+        for member in department["members"]:
+            day = daily.get(member["id"], {})
+            active = open_sessions.get(member["id"])
+            if active:
+                state = "checked_in"
+            elif day.get("check_ins"):
+                state = "checked_out"
+            else:
+                state = "not_checked_in"
+            member.update(
+                state=state,
+                check_in_at=day.get("check_in_at"),
+                check_out_at=None if active else day.get("check_out_at"),
+                total_seconds=int(day.get("confirmed_seconds", 0)),
+                elapsed_seconds=(
+                    max(0, int((now - _parse(active["checked_in_at"])).total_seconds())) if active else 0
+                ),
+                active_since=active["checked_in_at"] if active else None,
+                tasks=activity.get(member["id"], {}).get("tasks", []),
+                task_seconds_today=activity.get(member["id"], {}).get("seconds_today", 0),
+            )
+            counts[state] += 1
+    return {
+        "date": today_key,
+        "timezone": policy["timezone"],
+        "server_time": _stamp(now),
+        "counts": counts,
+        "departments": departments,
     }
 
 

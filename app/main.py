@@ -315,6 +315,10 @@ class DepartmentMemberIn(BaseModel):
     user_id: str
 
 
+class DepartmentLeadIn(BaseModel):
+    user_id: Optional[str] = None
+
+
 class TaskCommentIn(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
 
@@ -428,6 +432,8 @@ def api_me(
         "user": {
             **auth.public_user(user),
             "department_ids": db.user_department_ids(str(user["id"])),
+            "led_department_ids": (led := db.led_department_ids(str(user["id"]))),
+            "is_department_lead": bool(led),
         }
     }
 
@@ -1453,9 +1459,15 @@ def time_report(
     actor = auth.require_user(request)
     # Operators see only themselves; admins may inspect work within their departments.
     target = user_id or str(actor["id"])
-    if actor.get("role") == "operator" and target != str(actor["id"]):
+    led = set(db.led_department_ids(str(actor["id"])))
+    lead_scope = actor.get("role") != "super_admin" and bool(department_id) and department_id in led
+    if lead_scope:
+        members = {m["id"] for m in db.list_department_members(department_id)}
+        if target != "all" and target not in members:
+            raise HTTPException(403, "That employee is not in your department")
+    elif actor.get("role") == "operator" and target != str(actor["id"]):
         raise HTTPException(403, "You can only view your own time log")
-    if actor.get("role") == "admin":
+    elif actor.get("role") == "admin":
         allowed_departments = set(db.user_department_ids(str(actor["id"])))
         if target == "all" or target != str(actor["id"]):
             if not department_id or department_id not in allowed_departments:
@@ -1520,6 +1532,19 @@ def attendance_report(
     actor_id = str(actor["id"])
     role = actor.get("role")
     target = user_id or actor_id
+    led = set(db.led_department_ids(actor_id))
+    if role != "super_admin" and department_id and department_id in led:
+        members = {m["id"] for m in db.list_department_members(department_id) if m["status"] == "active"}
+        if target == "all":
+            selected_ids = sorted(members)
+        elif target in members:
+            selected_ids = [target]
+        else:
+            raise HTTPException(403, "That employee is not in your department")
+        try:
+            return attendance.report(month, selected_ids, department_id=department_id)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if role == "super_admin":
         if department_id and not db.get_department(department_id):
             raise HTTPException(404, "Department not found")
@@ -1540,6 +1565,27 @@ def attendance_report(
         return attendance.report(month, selected_ids, department_id=department_id)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.get("/api/attendance/overview")
+def attendance_overview(request: Request, department_id: Optional[str] = None) -> dict[str, Any]:
+    """Department attendance + task activity: Super Admin (any/all) or a lead (own departments)."""
+    actor = auth.require_user(request)
+    if auth.is_super_admin(actor):
+        if department_id:
+            if not db.get_department(department_id):
+                raise HTTPException(404, "Department not found")
+            ids = [department_id]
+        else:
+            ids = [d["id"] for d in db.list_departments(include_inactive=False)]
+    else:
+        led = db.led_department_ids(str(actor["id"]))
+        if not led:
+            raise HTTPException(403, "Department lead access required")
+        if department_id and department_id not in led:
+            raise HTTPException(403, "You can only view your own department")
+        ids = [department_id] if department_id else led
+    return attendance.department_overview(ids)
 
 
 @app.get("/api/attendance/today")
@@ -1749,6 +1795,25 @@ def remove_department_member(request: Request, department_id: str, user_id: str)
         str(actor["id"]), target_url="/?route=deptmgmt",
     )
     return db.list_department_members(department_id)
+
+
+@app.put("/api/departments/{department_id}/lead")
+def set_department_lead(request: Request, department_id: str, body: DepartmentLeadIn) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    department = db.get_department(department_id)
+    if not department:
+        raise HTTPException(404, "Department not found")
+    previous = department.get("lead_user_id")
+    try:
+        updated = db.set_department_lead(department_id, body.user_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    detail = "The department lead was removed." if not body.user_id else "A new department lead was assigned."
+    db.notify_super_admins(
+        "admin", f"Department lead updated: {department['name']}", detail,
+        str(actor["id"]), target_url="/?route=deptmgmt",
+    )
+    return {**(updated or {}), "previous_lead_user_id": previous}
 
 
 @app.get("/api/team/members")

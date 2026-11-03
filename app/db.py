@@ -609,6 +609,7 @@ def _migrate_workspace(conn: sqlite3.Connection) -> None:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
+    add_columns("departments", {"lead_user_id": "TEXT REFERENCES users(id) ON DELETE SET NULL"})
     add_columns(
         "tasks",
         {
@@ -1610,7 +1611,10 @@ def list_departments(
             dict(r)
             for r in conn.execute(
                 f"""
-                SELECT d.*, (SELECT COUNT(*) FROM department_members m
+                SELECT d.*,
+                       (SELECT COALESCE(NULLIF(lu.display_name, ''), lu.username)
+                        FROM users lu WHERE lu.id = d.lead_user_id) AS lead_name,
+                       (SELECT COUNT(*) FROM department_members m
                              JOIN users u ON u.id = m.user_id
                              WHERE m.department_id = d.id AND u.status = 'active') AS member_count
                 FROM departments d {where} ORDER BY d.sort_order, d.name
@@ -1725,7 +1729,51 @@ def remove_department_member(department_id: str, user_id: str) -> bool:
             "DELETE FROM department_members WHERE department_id = ? AND user_id = ?",
             (department_id, user_id),
         )
+        conn.execute(
+            "UPDATE departments SET lead_user_id = NULL, updated_at = ? "
+            "WHERE id = ? AND lead_user_id = ?",
+            (_now(), department_id, user_id),
+        )
     return cur.rowcount == 1
+
+
+def set_department_lead(department_id: str, user_id: Optional[str]) -> Optional[dict[str, Any]]:
+    """Assign, change (user_id) or remove (None) the lead; the lead must be an active member."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT 1 FROM departments WHERE id = ?", (department_id,)).fetchone():
+            return None
+        if user_id is not None:
+            ok = conn.execute(
+                """
+                SELECT 1 FROM department_members m JOIN users u ON u.id = m.user_id
+                WHERE m.department_id = ? AND m.user_id = ? AND u.status = 'active'
+                """,
+                (department_id, user_id),
+            ).fetchone()
+            if not ok:
+                raise ValueError("The lead must be an active employee of this department.")
+        conn.execute(
+            "UPDATE departments SET lead_user_id = ?, updated_at = ? WHERE id = ?",
+            (user_id, _now(), department_id),
+        )
+    return get_department(department_id)
+
+
+def led_department_ids(user_id: str) -> list[str]:
+    """Active departments this user currently leads (and still belongs to)."""
+    with connect() as conn:
+        return [
+            r["id"]
+            for r in conn.execute(
+                """
+                SELECT d.id FROM departments d
+                JOIN department_members m ON m.department_id = d.id AND m.user_id = d.lead_user_id
+                WHERE d.lead_user_id = ? AND d.status = 'active'
+                """,
+                (user_id,),
+            )
+        ]
 
 
 def user_department_ids(user_id: str) -> list[str]:
@@ -2377,6 +2425,57 @@ def time_report(
         "tasks": sorted(tasks.values(), key=lambda item: -item["seconds"]),
         "entries": entries,
     }
+
+
+def member_task_activity(
+    user_ids: list[str], departments_scope: list[str], day_start: str, limit_per_user: int = 40
+) -> dict[str, dict[str, Any]]:
+    """Per-user assigned tasks (within the given departments) with recorded time; read-only."""
+    if not user_ids or not departments_scope:
+        return {}
+    umarks = ",".join("?" * len(user_ids))
+    dmarks = ",".join("?" * len(departments_scope))
+    now = _now()
+    result: dict[str, dict[str, Any]] = {uid: {"tasks": [], "seconds_today": 0} for uid in user_ids}
+    with connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT a.user_id, t.id, t.title, t.notes AS description, t.status, t.priority,
+                   t.deadline, t.updated_at, b.name AS business_name,
+                   COALESCE((SELECT SUM(
+                        MAX(0, CAST(strftime('%s', COALESCE(e.ended_at, ?)) AS INTEGER)
+                             - CAST(strftime('%s', e.started_at) AS INTEGER)))
+                        FROM task_time_entries e
+                        WHERE e.task_id = t.id AND e.user_id = a.user_id), 0) AS tracked_seconds,
+                   EXISTS (SELECT 1 FROM task_time_entries e
+                           WHERE e.task_id = t.id AND e.user_id = a.user_id
+                             AND e.ended_at IS NULL) AS running
+            FROM task_assignees a
+            JOIN tasks t ON t.id = a.task_id
+            JOIN businesses b ON b.id = t.business_id
+            WHERE a.user_id IN ({umarks}) AND t.department_id IN ({dmarks})
+            ORDER BY running DESC, t.updated_at DESC
+            """,
+            [now, *user_ids, *departments_scope],
+        ).fetchall()
+        for row in rows:
+            bucket = result[row["user_id"]]
+            if len(bucket["tasks"]) < limit_per_user:
+                bucket["tasks"].append({**{k: row[k] for k in row.keys() if k != "user_id"}, "running": bool(row["running"])})
+        for row in conn.execute(
+            f"""
+            SELECT e.user_id,
+                   SUM(MAX(0, CAST(strftime('%s', COALESCE(e.ended_at, ?)) AS INTEGER)
+                        - CAST(strftime('%s', MAX(e.started_at, ?)) AS INTEGER))) AS secs
+            FROM task_time_entries e JOIN tasks t ON t.id = e.task_id
+            WHERE e.user_id IN ({umarks}) AND t.department_id IN ({dmarks})
+              AND COALESCE(e.ended_at, ?) > ?
+            GROUP BY e.user_id
+            """,
+            [now, day_start, *user_ids, *departments_scope, now, day_start],
+        ):
+            result[row["user_id"]]["seconds_today"] = int(row["secs"] or 0)
+    return result
 
 
 def _active_comment_mentions(conn: sqlite3.Connection, user_ids: set[str]) -> set[str]:

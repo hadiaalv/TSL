@@ -746,6 +746,10 @@
             <button type="button" class="ghost" data-save>Save</button>
             <button type="button" class="ghost" data-toggle-status="${d.status === "active" ? "inactive" : "active"}">${d.status === "active" ? "Deactivate" : "Activate"}</button>
           </div>
+          <div class="dept-row dept-lead-row">
+            <label>Department lead <select data-lead aria-label="Department lead"><option value="">No lead</option></select></label>
+            <span class="muted" data-lead-name>${d.lead_name ? `Current lead: ${esc(d.lead_name)}` : "No lead assigned"}</span>
+          </div>
           <details><summary>Members (${d.member_count || 0})</summary>
             <div class="member-grid" data-members="${esc(d.id)}">Loading…</div>
           </details>
@@ -773,6 +777,21 @@
         await loadDepartments();
         await renderDeptMgmt();
       }));
+      const leadSelect = card.querySelector("[data-lead]");
+      const leadName = card.querySelector("[data-lead-name]");
+      const paintLeadOptions = async () => {
+        const members = (await api(`/api/departments/${encodeURIComponent(id)}/members`)).filter((m) => m.status === "active");
+        const current = (depts.find((x) => x.id === id) || {}).lead_user_id || "";
+        leadSelect.innerHTML = `<option value="">No lead</option>` + members.map((m) => `<option value="${esc(m.id)}"${m.id === current ? " selected" : ""}>${esc(m.display_name)}</option>`).join("");
+      };
+      guard(paintLeadOptions)();
+      leadSelect.addEventListener("change", guard(async () => {
+        const updated = await api(`/api/departments/${encodeURIComponent(id)}/lead`, json("PUT", { user_id: leadSelect.value || null }));
+        const d0 = depts.find((x) => x.id === id);
+        if (d0) d0.lead_user_id = updated.lead_user_id;
+        leadName.textContent = leadSelect.value ? `Current lead: ${leadSelect.selectedOptions[0].textContent}` : "No lead assigned";
+        toast("Department lead updated.");
+      }));
       const details = card.querySelector("details");
       const grid = card.querySelector("[data-members]");
       const paintMembers = async () => {
@@ -783,6 +802,7 @@
           if (box.checked) await api(`/api/departments/${encodeURIComponent(id)}/members`, json("POST", { user_id: box.dataset.user }));
           else await api(`/api/departments/${encodeURIComponent(id)}/members/${encodeURIComponent(box.dataset.user)}`, { method: "DELETE" });
           await loadDepartments();
+          await paintLeadOptions();
         })));
       };
       details.addEventListener("toggle", () => { if (details.open) guard(paintMembers)(); }, { once: true });

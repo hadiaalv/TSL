@@ -58,3 +58,16 @@ policy.
 
 The attendance tables and indexes are created idempotently by the existing
 SQLite initialization/migration path. No task-time records are modified.
+
+## Server-side duration and department leads
+
+- A session ends only on an explicit Check-Out. Browser heartbeats are informational; sleep, shutdown or a
+  closed tab never pause or end a session. Duration is `check_out − check_in` from stored UTC timestamps
+  (displayed in the policy timezone, Asia/Karachi by default). Sessions left `paused` by the old
+  gap-detection logic are resumed automatically.
+- `departments.lead_user_id` stores each department's lead (Super Admin only: `PUT /api/departments/{id}/lead`,
+  body `{"user_id": "<member id>" | null}`). The lead must be an active member; removing them from the
+  department clears the lead.
+- Leads get read-only access, enforced on the backend, to `GET /api/attendance/overview`,
+  `GET /api/attendance/report` and `GET /api/time/report` for their own department only.
+  Super Admin sees all departments. Admins gain nothing unless also assigned as a lead.
