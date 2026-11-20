@@ -7,10 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261102-responsive1" />
-  <link rel="stylesheet" href="/static/workspace.css?v=20261029-attendance2" />
-  <link rel="stylesheet" href="/static/shell.css?v=20261030-shell3" />
-  <link rel="stylesheet" href="/static/dashboard.css?v=20261030-dash1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261120-brand1" />
+  <link rel="stylesheet" href="/static/workspace.css?v=20261120-corporate2" />
+  <link rel="stylesheet" href="/static/shell.css?v=20261120-brand1" />
+  <link rel="stylesheet" href="/static/dashboard.css?v=20261120-brand1" />
   <link rel="icon" type="image/png" href="/public/logo.png" />
   <link rel="apple-touch-icon" href="/public/logo.png" />
 </head>
@@ -39,7 +39,7 @@
           <div id="sidebar-departments" class="nav-group-body"></div>
         </div>
         <p class="nav-label">Activity</p>
-        <a href="#approvals" data-route="approvals" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Approvals</span></a>
+        <a href="#approvals" data-route="approvals" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Approvals</span></a>
         <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
         <a href="#attendance" data-route="attendance" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg></span><span>Office Attendance</span></a>
         <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time Logs</span></a>
@@ -347,7 +347,9 @@
           <option value="distributor_outreach">Distributor</option><option value="follow_up">Follow-up</option>
           <option value="meeting_action">Meeting</option><option value="decision">Decision</option><option value="opportunity">Opportunity</option>
         </select>
-        <input id="board-task-approver" maxlength="160" placeholder="Approver (CEO, client, etc.)" aria-label="External approver" />
+        <label class="approval-toggle"><input id="board-task-requires-approval" type="checkbox" /> Requires approval</label>
+        <select id="board-task-approver-user" aria-label="Assign approval to" disabled><option value="">Select approver</option></select>
+        <input id="board-task-approver" maxlength="160" placeholder="External approver (optional)" aria-label="External approver" />
         <button type="submit">Add card</button>
       </form>
       <div id="board-columns" class="board-columns"></div>
@@ -451,7 +453,9 @@
       <label>Brand <select id="quick-task-brand" required></select></label>
       <label id="quick-task-department-label" class="admin-only hidden">Department <select id="quick-task-department"></select></label>
       <label>Due date <input id="quick-task-due" type="date" /></label>
-      <label>Approver <input id="quick-task-approver" maxlength="160" placeholder="CEO, client, etc. (optional)" /></label>
+      <label class="approval-toggle"><input id="quick-task-requires-approval" type="checkbox" /> Requires approval</label>
+      <label>Assign approval to <select id="quick-task-approver-user" disabled><option value="">Select approver</option></select></label>
+      <label>External approver <input id="quick-task-approver" maxlength="160" placeholder="Optional external approver" /></label>
       <p id="quick-task-error" class="form-error" role="alert"></p>
       <div class="modal-actions">
         <button type="button" class="ghost" id="quick-task-cancel">Cancel</button>

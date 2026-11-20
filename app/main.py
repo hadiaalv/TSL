@@ -276,6 +276,8 @@ class TaskIn(BaseModel):
     assignee_ids: list[str] = Field(default_factory=list)
     checklist: list[dict[str, Any]] = Field(default_factory=list)
     links: list[dict[str, Any]] = Field(default_factory=list)
+    requires_approval: bool = False
+    approver_user_id: Optional[str] = None
 
 
 class TaskPatch(BaseModel):
@@ -293,6 +295,8 @@ class TaskPatch(BaseModel):
     assignee_ids: Optional[list[str]] = None
     checklist: Optional[list[dict[str, Any]]] = None
     links: Optional[list[dict[str, Any]]] = None
+    requires_approval: Optional[bool] = None
+    approver_user_id: Optional[str] = None
 
 
 class DepartmentIn(BaseModel):
@@ -328,7 +332,9 @@ class NotificationSoundIn(BaseModel):
 
 
 class ApprovalDecision(BaseModel):
-    approved: bool
+    approved: Optional[bool] = None
+    action: Optional[str] = None
+    reason: str = Field(default="", max_length=2000)
 
 
 class LoginIn(BaseModel):
@@ -1276,6 +1282,17 @@ def _visible_task(user: dict[str, Any], task_id: str) -> dict[str, Any]:
     return task
 
 
+def _validate_approver(approver_user_id: Optional[str], actor_id: str) -> Optional[dict[str, Any]]:
+    if not approver_user_id:
+        return None
+    approver = db.get_user(approver_user_id)
+    if not approver or approver.get("status") != "active":
+        raise HTTPException(422, "Choose an active registered approver")
+    if str(approver["id"]) == actor_id:
+        raise HTTPException(422, "The task creator cannot approve their own task")
+    return approver
+
+
 @app.get("/api/tasks")
 def tasks(
     request: Request,
@@ -1319,6 +1336,11 @@ def create_task(
     fields = body.model_dump()
     approver_name = body.approver_name.strip()
     fields.pop("approver_name")
+    requires_approval = bool(fields.pop("requires_approval", False))
+    approver_user_id = fields.pop("approver_user_id", None)
+    approver = _validate_approver(approver_user_id, str(actor["id"]))
+    if requires_approval and not approver_user_id:
+        raise HTTPException(422, "Choose a registered approver when approval is required")
     _validate_task_fields(fields)
     business_id = body.business_id or _general_business_id()
     if not db.get_business(business_id):
@@ -1338,13 +1360,35 @@ def create_task(
         fields["notes"] = description
     fields.pop("owner", None)
     task = db.create_task(**fields, actor_user_id=str(actor["id"]))
-    if approver_name:
+    if requires_approval:
+        approval = db.create_approval(
+            summary=f"Approval requested for task: {task['title']}",
+            action_type="task_approval",
+            business_id=business_id,
+            task_id=task["id"],
+            approver_user_id=approver_user_id,
+            actor_user_id=str(actor["id"]),
+            previous_status=task["status"],
+        )
+        db.notify_user(
+            approver_user_id,
+            "approval",
+            f"Approval requested: {task['title']}",
+            f"{task.get('business_name') or 'General'} needs your decision.",
+            str(actor["id"]),
+            source_id=f"{approval['id']}:requested",
+            task_id=task["id"],
+            target_url=f"/?task={task['id']}",
+        )
+    elif approver_name:
         approval = db.create_approval(
             summary=f"Approval requested for task: {task['title']}",
             action_type="task_approval",
             business_id=business_id,
             task_id=task["id"],
             payload={"approver_name": approver_name},
+            actor_user_id=str(actor["id"]),
+            previous_status=task["status"],
         )
         db.notify_super_admins(
             "approval",
@@ -1373,7 +1417,23 @@ def patch_task(
         for k, v in body.model_dump().items()
         if k in body.model_fields_set and (v is not None or k in ("deadline", "next_follow_up", "department_id"))
     }
+    requires_approval = fields.pop("requires_approval", None)
+    approver_user_id = fields.pop("approver_user_id", None)
+    if requires_approval is False:
+        raise HTTPException(422, "Pending approvals cannot be disabled")
+    if requires_approval is True or approver_user_id is not None:
+        if not auth.can_manage_tasks(actor):
+            raise HTTPException(403, "Only task managers can change approval assignment")
+        approver = _validate_approver(approver_user_id, str(actor["id"]))
+        if requires_approval is True and not approver_user_id:
+            raise HTTPException(422, "Choose a registered approver when approval is required")
     _validate_task_fields(fields)
+    if (
+        fields.get("status") == "done"
+        and not auth.can_manage_tasks(actor)
+        and db.get_pending_task_approval(task_id)
+    ):
+        fields["status"] = "pending_approval"
     if not auth.can_manage_tasks(actor):
         if not db.user_is_task_assignee(str(actor["id"]), task_id):
             raise HTTPException(403, "Only assignees can update this task")
@@ -1414,6 +1474,45 @@ def patch_task(
         raise HTTPException(404, "Task not found")
 
     actor_id = str(actor["id"])
+    if approver_user_id is not None:
+        pending = db.get_pending_task_approval(task_id)
+        if pending:
+            reassigned = db.reassign_approval(
+                pending["id"],
+                actor_id,
+                approver_user_id,
+            )
+            if reassigned:
+                db.notify_user(
+                    approver_user_id,
+                    "approval",
+                    f"Approval reassigned: {updated['title']}",
+                    f"{actor.get('display_name') or actor['username']} assigned this task to you.",
+                    actor_id,
+                    source_id=f"{pending['id']}:reassigned:{approver_user_id}",
+                    task_id=task_id,
+                    target_url=f"/?task={task_id}",
+                )
+        elif requires_approval is True:
+            approval = db.create_approval(
+                summary=f"Approval requested for task: {updated['title']}",
+                action_type="task_approval",
+                business_id=updated["business_id"],
+                task_id=task_id,
+                approver_user_id=approver_user_id,
+                actor_user_id=actor_id,
+                previous_status=previous["status"],
+            )
+            db.notify_user(
+                approver_user_id,
+                "approval",
+                f"Approval requested: {updated['title']}",
+                f"{updated.get('business_name') or 'General'} needs your decision.",
+                actor_id,
+                source_id=f"{approval['id']}:requested",
+                task_id=task_id,
+                target_url=f"/?task={task_id}",
+            )
     before = set(previous.get("assignee_ids", []))
     after = set(updated.get("assignee_ids", []))
     newly_assigned = after - before
@@ -1936,8 +2035,13 @@ def approvals(
     request: Request,
     status: str = "pending",
 ) -> list[dict[str, Any]]:
-    auth.require_task_manager(request)
-    return db.list_approvals(status)
+    actor = auth.require_user(request)
+    include_all = auth.can_manage_tasks(actor)
+    return db.list_approvals(
+        status,
+        viewer_user_id=str(actor["id"]),
+        include_all=include_all,
+    )
 
 
 @app.post("/api/approvals/{approval_id}/decide")
@@ -1946,18 +2050,39 @@ def decide(
     approval_id: str,
     body: ApprovalDecision,
 ) -> dict[str, Any]:
-    actor = auth.require_task_manager(request)
-    row = db.decide_approval(
-        approval_id,
-        body.approved,
-    )
-
+    actor = auth.require_user(request)
+    existing = db.get_approval(approval_id)
+    if not existing:
+        raise HTTPException(404, "Approval not found")
+    assigned = existing.get("approver_user_id")
+    if assigned:
+        if str(actor["id"]) != str(assigned) and not auth.is_super_admin(actor):
+            raise HTTPException(403, "Only the assigned approver can decide this approval")
+    elif not auth.can_manage_tasks(actor):
+        raise HTTPException(403, "Insufficient role permissions")
+    action = body.action
+    if action is None:
+        if body.approved is None:
+            raise HTTPException(422, "Choose approve, reject, or request_changes")
+        action = "approve" if body.approved else "reject"
+    try:
+        row = db.decide_approval(
+            approval_id,
+            str(actor["id"]),
+            action=action,
+            comment=body.reason,
+            override=auth.is_super_admin(actor) and str(actor["id"]) != str(assigned),
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if not row:
         raise HTTPException(
             404,
             "Approval not found",
         )
-    status_text = "approved" if body.approved else "rejected"
+    status_text = action.replace("_", " ")
     db.notify_super_admins(
         "approval",
         f"Approval {status_text}",

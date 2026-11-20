@@ -22,6 +22,9 @@ TASK_STATUSES = (
     "open",
     "in_progress",
     "waiting_on",
+    "pending_approval",
+    "changes_requested",
+    "approved",
     "delegated",
     "blocked",
     "done",
@@ -36,7 +39,7 @@ CLOSED_STATUSES = ("done", "cancelled")
 STATUS_GROUPS = {
     "todo": ("open",),
     "in_progress": ("in_progress", "delegated"),
-    "review": ("waiting_on", "blocked"),
+    "review": ("waiting_on", "blocked", "pending_approval", "changes_requested"),
     "completed": CLOSED_STATUSES,
 }
 
@@ -618,6 +621,38 @@ def _migrate_workspace(conn: sqlite3.Connection) -> None:
             "checklist_json": "TEXT NOT NULL DEFAULT '[]'",
             "links_json": "TEXT NOT NULL DEFAULT '[]'",
         },
+    )
+    add_columns(
+        "approvals",
+        {
+            "approver_user_id": "TEXT REFERENCES users(id)",
+            "previous_status": "TEXT",
+            "new_status": "TEXT",
+            "decision_comment": "TEXT NOT NULL DEFAULT ''",
+            "decided_by": "TEXT REFERENCES users(id)",
+        },
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_approvals_approver_status "
+        "ON approvals(approver_user_id, status)"
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS approval_history (
+            id TEXT PRIMARY KEY,
+            approval_id TEXT NOT NULL REFERENCES approvals(id) ON DELETE CASCADE,
+            actor_user_id TEXT REFERENCES users(id),
+            action TEXT NOT NULL,
+            comment TEXT NOT NULL DEFAULT '',
+            previous_status TEXT,
+            new_status TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_approval_history_approval "
+        "ON approval_history(approval_id, created_at)"
     )
     add_columns("task_time_entries", {"department_id": "TEXT REFERENCES departments(id)"})
     add_columns(
@@ -1815,6 +1850,8 @@ def create_task(
     assignee_ids: Optional[list[str]] = None,
     checklist: Optional[list[dict[str, Any]]] = None,
     links: Optional[list[dict[str, Any]]] = None,
+    requires_approval: bool = False,
+    approver_user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Insert a task. `owner` is a legacy username; a matching user becomes the assignee."""
     tid = _uid()
@@ -1970,6 +2007,20 @@ def _enrich_tasks(
                 "status": r["status"],
             }
         )
+    approvals = {
+        r["task_id"]: dict(r)
+        for r in conn.execute(
+            f"""
+            SELECT a.task_id, a.status AS approval_status, a.approver_user_id,
+                   COALESCE(u.display_name, u.username) AS approver_display_name
+            FROM approvals a
+            LEFT JOIN users u ON u.id = a.approver_user_id
+            WHERE a.task_id IN ({marks}) AND a.status = 'pending'
+            ORDER BY a.created_at DESC
+            """,
+            ids,
+        )
+    }
     comment_counts = {
         r["task_id"]: r["n"]
         for r in conn.execute(
@@ -2005,6 +2056,7 @@ def _enrich_tasks(
     for task in tasks:
         task["assignees"] = assignees.get(task["id"], [])
         task["assignee_ids"] = [a["id"] for a in task["assignees"]]
+        task.update(approvals.get(task["id"], {"approval_status": None}))
         task["comment_count"] = comment_counts.get(task["id"], 0)
         task["unread_comments"] = unread.get(task["id"], 0)
         task["running_timers"] = running.get(task["id"], [])
@@ -2576,6 +2628,49 @@ def notify_super_admins(
     return recipients
 
 
+def notify_user(
+    recipient_user_id: str,
+    event_type: str,
+    title: str,
+    body: str,
+    actor_user_id: Optional[str],
+    *,
+    source_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    target_url: str = "/",
+) -> bool:
+    if event_type not in ("approval", "admin"):
+        raise ValueError("Unsupported user notification type")
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE id = ? AND status = 'active'",
+            (recipient_user_id,),
+        ).fetchone()
+        if not row or recipient_user_id == actor_user_id:
+            return False
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO notifications
+                (id, recipient_user_id, actor_user_id, notification_type, source_id,
+                 title, body, target_url, created_at, task_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                _uid(),
+                recipient_user_id,
+                actor_user_id,
+                event_type,
+                source_id or _uid(),
+                title,
+                body,
+                target_url,
+                _now(),
+                task_id,
+            ),
+        )
+        return cursor.rowcount == 1
+
+
 def notify_task_event(
     task_id: str,
     event_type: str,
@@ -2918,16 +3013,39 @@ def create_approval(
     business_id: Optional[str] = None,
     task_id: Optional[str] = None,
     payload: Optional[dict] = None,
+    approver_user_id: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
+    previous_status: Optional[str] = None,
 ) -> dict[str, Any]:
     aid = _uid()
     now = _now()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO approvals (id, business_id, task_id, action_type, summary, payload_json, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+            INSERT INTO approvals
+                (id, business_id, task_id, action_type, summary, payload_json, status,
+                 previous_status, approver_user_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
             """,
-            (aid, business_id, task_id, action_type, summary, json.dumps(payload or {}), now),
+            (
+                aid,
+                business_id,
+                task_id,
+                action_type,
+                summary,
+                json.dumps(payload or {}),
+                previous_status,
+                approver_user_id,
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO approval_history
+                (id, approval_id, actor_user_id, action, previous_status, new_status, created_at)
+            VALUES (?, ?, ?, 'requested', ?, 'pending', ?)
+            """,
+            (_uid(), aid, actor_user_id, previous_status, now),
         )
     return get_approval(aid)  # type: ignore
 
@@ -2939,6 +3057,7 @@ def _approval_dict(row: sqlite3.Row) -> dict[str, Any]:
     except (TypeError, ValueError):
         payload = {}
     approval["approver_name"] = payload.get("approver_name", "") if isinstance(payload, dict) else ""
+    approval["is_assigned_approver"] = bool(approval.get("approver_user_id"))
     return approval
 
 
@@ -2948,22 +3067,149 @@ def get_approval(approval_id: str) -> Optional[dict[str, Any]]:
     return _approval_dict(row) if row else None
 
 
-def list_approvals(status: str = "pending") -> list[dict[str, Any]]:
+def get_pending_task_approval(task_id: str) -> Optional[dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM approvals WHERE task_id = ? AND status = 'pending' "
+            "ORDER BY created_at DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    return _approval_dict(row) if row else None
+
+
+def reassign_approval(
+    approval_id: str,
+    actor_user_id: str,
+    approver_user_id: str,
+) -> Optional[dict[str, Any]]:
+    now = _now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM approvals WHERE id = ? AND status = 'pending'",
+            (approval_id,),
+        ).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "UPDATE approvals SET approver_user_id = ? WHERE id = ?",
+            (approver_user_id, approval_id),
+        )
+        conn.execute(
+            """
+            INSERT INTO approval_history
+                (id, approval_id, actor_user_id, action, comment,
+                 previous_status, new_status, created_at)
+            VALUES (?, ?, ?, 'reassigned', ?, 'pending', 'pending', ?)
+            """,
+            (_uid(), approval_id, actor_user_id, f"Assigned to {approver_user_id}", now),
+        )
+    return get_approval(approval_id)
+
+
+def list_approvals(
+    status: str = "pending",
+    *,
+    viewer_user_id: Optional[str] = None,
+    include_all: bool = True,
+) -> list[dict[str, Any]]:
+    clauses = ["a.status = ?"]
+    params: list[Any] = [status]
+    if viewer_user_id and not include_all:
+        clauses.append("a.approver_user_id = ?")
+        params.append(viewer_user_id)
     with connect() as conn:
         rows = conn.execute(
-            "SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC",
-            (status,),
+            f"SELECT a.*, COALESCE(u.display_name, u.username) AS approver_display_name "
+            f"FROM approvals a LEFT JOIN users u ON u.id = a.approver_user_id "
+            f"WHERE {' AND '.join(clauses)} ORDER BY a.created_at DESC",
+            params,
         ).fetchall()
     return [_approval_dict(row) for row in rows]
 
 
-def decide_approval(approval_id: str, approved: bool) -> Optional[dict[str, Any]]:
-    status = "approved" if approved else "rejected"
+def decide_approval(
+    approval_id: str,
+    actor_user_id: str,
+    *,
+    action: str,
+    comment: str = "",
+    override: bool = False,
+) -> Optional[dict[str, Any]]:
+    if action not in ("approve", "reject", "request_changes"):
+        raise ValueError("Invalid approval action")
     with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM approvals WHERE id = ?", (approval_id,)
+        ).fetchone()
+        if not row:
+            return None
+        if row["status"] != "pending":
+            raise ValueError("Approval has already been decided")
+        assigned = row["approver_user_id"]
+        if assigned and assigned != actor_user_id and not override:
+            raise PermissionError("Only the assigned approver can decide this approval")
+        if action in ("reject", "request_changes") and not comment.strip():
+            raise ValueError("A reason is required for this approval action")
+        status = {
+            "approve": "approved",
+            "reject": "rejected",
+            "request_changes": "changes_requested",
+        }[action]
+        now = _now()
         conn.execute(
-            "UPDATE approvals SET status = ?, decided_at = ? WHERE id = ?",
-            (status, _now(), approval_id),
+            """
+            UPDATE approvals
+            SET status = ?, decided_at = ?, decided_by = ?, decision_comment = ?,
+                new_status = ?
+            WHERE id = ?
+            """,
+            (status, now, actor_user_id, comment.strip(), status, approval_id),
         )
+        if row["task_id"]:
+            task_status = "approved" if action == "approve" else (
+                "changes_requested" if action == "request_changes" else "in_progress"
+            )
+            conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                (task_status, now, row["task_id"]),
+            )
+            conn.execute(
+                """
+                INSERT INTO approval_history
+                    (id, approval_id, actor_user_id, action, comment,
+                     previous_status, new_status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _uid(),
+                    approval_id,
+                    actor_user_id,
+                    action,
+                    comment.strip(),
+                    row["status"],
+                    status,
+                    now,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO approval_history
+                    (id, approval_id, actor_user_id, action, comment,
+                     previous_status, new_status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _uid(),
+                    approval_id,
+                    actor_user_id,
+                    action,
+                    comment.strip(),
+                    row["status"],
+                    status,
+                    now,
+                ),
+            )
     return get_approval(approval_id)
 
 

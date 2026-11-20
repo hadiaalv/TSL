@@ -787,6 +787,26 @@ async function refreshTeamMembers() {
       .map((member) => `<option value="${esc(member.username)}">${esc(member.display_name)} (@${esc(member.username)})</option>`)
       .join("");
   }
+  for (const selectId of ["#board-task-approver-user", "#quick-task-approver-user"]) {
+    const approverSelect = $(selectId);
+    if (approverSelect) {
+      approverSelect.innerHTML = `<option value="">Select approver</option>` + teamMembers
+        .map((member) => `<option value="${esc(member.id)}">${esc(member.display_name)} (@${esc(member.username)})</option>`)
+        .join("");
+    }
+  }
+  for (const checkboxId of ["#board-task-requires-approval", "#quick-task-requires-approval"]) {
+    const checkbox = $(checkboxId);
+    if (!checkbox || checkbox.dataset.bound) continue;
+    checkbox.dataset.bound = "1";
+    checkbox.addEventListener("change", () => {
+      const select = $(`${checkboxId.replace("-requires-approval", "-approver-user")}`);
+      if (select) {
+        select.disabled = !checkbox.checked;
+        if (!checkbox.checked) select.value = "";
+      }
+    });
+  }
 }
 
 async function loadTaskComments(taskId) {
@@ -1207,10 +1227,11 @@ async function refreshApprovals() {
     .map(
       (a) => `<div class="item" data-id="${esc(a.id)}">
         <div>${esc(a.summary)}</div>
-        <div class="muted">${esc(a.action_type)}${a.approver_name ? ` · Approver: ${esc(a.approver_name)}` : ""}</div>
+        <div class="muted">${esc(a.action_type)}${a.approver_name ? ` · External approver: ${esc(a.approver_name)}` : ""}${a.approver_display_name ? ` · Assigned to: ${esc(a.approver_display_name)}` : ""}</div>
         <div class="actions">
           <button data-ok="1">Approve</button>
-          <button data-ok="0" class="ghost">Reject</button>
+          <button data-action="request_changes" class="ghost">Request changes</button>
+          <button data-action="reject" class="ghost">Reject</button>
         </div>
       </div>`
     )
@@ -1218,9 +1239,12 @@ async function refreshApprovals() {
   container.querySelectorAll("button").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const id = btn.closest(".item").dataset.id;
+      const action = btn.dataset.action || (btn.dataset.ok === "1" ? "approve" : "reject");
+      const reason = action === "approve" ? "" : window.prompt("Add a reason or feedback") || "";
+      if (action !== "approve" && !reason.trim()) return;
       await api(`/api/approvals/${id}/decide`, {
         method: "POST",
-        body: JSON.stringify({ approved: btn.dataset.ok === "1" }),
+        body: JSON.stringify({ action, reason }),
       });
       await refreshAll();
     });
@@ -1600,11 +1624,16 @@ function attachGlobalHandlers() {
           status: "open",
           source: "board",
           approver_name: $("#board-task-approver").value.trim(),
+          requires_approval: $("#board-task-requires-approval").checked,
+          approver_user_id: $("#board-task-approver-user").value || null,
         }),
       });
       $("#board-task-title").value = "";
       $("#board-task-due").value = "";
       $("#board-task-approver").value = "";
+      $("#board-task-requires-approval").checked = false;
+      $("#board-task-approver-user").value = "";
+      $("#board-task-approver-user").disabled = true;
       if (!$("#board-task-category").value) {
         $("#board-task-category").value = "other";
       }
@@ -1669,11 +1698,16 @@ function attachGlobalHandlers() {
           owner: "me",
           source: "manual",
           approver_name: $("#quick-task-approver").value.trim(),
+          requires_approval: $("#quick-task-requires-approval").checked,
+          approver_user_id: $("#quick-task-approver-user").value || null,
         }),
       });
       $("#quick-task-modal").classList.add("hidden");
       await Promise.all([refreshTasks(), refreshBrief(), refreshActivity()]);
       $("#quick-task-approver").value = "";
+      $("#quick-task-requires-approval").checked = false;
+      $("#quick-task-approver-user").value = "";
+      $("#quick-task-approver-user").disabled = true;
     } catch (error) {
       $("#quick-task-error").textContent = error.message;
     } finally {

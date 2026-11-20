@@ -241,6 +241,108 @@ body.drawer-open { overflow: hidden; }
   .attendance-filters, .attendance-filters > label { width: 100%; }
 }
 
+/* Corporate workspace treatment */
+.ws-root {
+  gap: 20px;
+}
+.ws-head {
+  padding: 18px 20px;
+  border: 1px solid #d6e1ef;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #edf3ff 100%);
+  box-shadow: 0 8px 24px rgba(34, 61, 105, .08);
+}
+.ws-head h2 {
+  color: #172b4d;
+  font-size: 1.35rem;
+  letter-spacing: -.025em;
+}
+.ws-chips { gap: 6px; }
+.ws-chip {
+  background: #f7faff;
+  border-color: #cbd8ea;
+  color: #40516b;
+  font-weight: 600;
+}
+.ws-chip:hover { background: #e8efff; border-color: #9eb4e9; color: #2341ad; }
+.ws-chip.active {
+  background: linear-gradient(135deg, #4167e5, #2948c4);
+  border-color: #2948c4;
+  box-shadow: 0 4px 10px rgba(49, 86, 216, .2);
+}
+.ws-filters {
+  padding: 10px;
+  border: 1px solid #d8e2ef;
+  border-radius: 12px;
+  background: #f8faff;
+}
+.ws-board { gap: 16px; }
+.ws-col {
+  border-radius: 14px;
+  padding: 12px;
+  background: #e9eff8;
+  border-color: #d3deec;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+}
+.ws-col:nth-child(1) { background: linear-gradient(180deg, #edf2fb, #e7edf7); }
+.ws-col:nth-child(2) { background: linear-gradient(180deg, #edf3ff, #e7eefb); }
+.ws-col:nth-child(3) { background: linear-gradient(180deg, #fff7e8, #f8efdf); }
+.ws-col:nth-child(4) { background: linear-gradient(180deg, #eaf8f2, #e3f2eb); }
+.ws-col header { border-bottom-color: rgba(116, 137, 166, .25); }
+.ws-col h3 { color: #253957; font-size: .82rem; letter-spacing: .03em; text-transform: uppercase; }
+.count-badge {
+  background: #d9e4f5;
+  color: #385172;
+  font-weight: 700;
+}
+.ws-card {
+  border-radius: 12px;
+  border-color: #d5dfec;
+  box-shadow: 0 3px 8px rgba(41, 63, 97, .06);
+}
+.ws-card:hover, .ws-card:focus-visible {
+  border-color: #6b86df;
+  box-shadow: 0 10px 22px rgba(49, 86, 216, .14);
+}
+.ws-card h4 { color: #1d2d49; }
+.ws-status { background: #e8edf6; color: #445775; }
+.priority-pill { background: #fff0d3; color: #a45c06; }
+.priority-pill.priority-p0 { background: #ffe4e8; color: #b42335; }
+.task-drawer-backdrop { background: rgba(20, 35, 62, .55); backdrop-filter: blur(2px); }
+.task-drawer-panel {
+  background: #f7f9fc;
+  border-left: 1px solid #cad7e8;
+  box-shadow: -16px 0 38px rgba(22, 38, 67, .2);
+  padding: 22px;
+}
+.drawer-head {
+  margin: -22px -22px 4px;
+  padding: 18px 22px;
+  background: linear-gradient(135deg, #172b4d, #3156d8);
+  color: #fff;
+}
+.drawer-head .muted { color: #c7d5f3; }
+.drawer-head .ghost { color: #fff; border-color: rgba(255,255,255,.3); background: rgba(255,255,255,.1); }
+.drawer-body, .drawer-comments {
+  padding: 16px;
+  border: 1px solid #d8e2ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 3px 10px rgba(27, 47, 78, .05);
+}
+.drawer-body .td-title, .drawer-body textarea { background: #fbfcff; }
+.drawer-section { padding-top: 12px; border-top: 1px solid #e4eaf3; }
+.drawer-section h4, .drawer-comments h4 { color: #253957; }
+.assignee-chip { background: #eaf0ff; border-color: #c6d3f3; color: #2948a8; }
+.comment { background: #eef4ff; border: 1px solid #d9e5fb; }
+.notif-row { border-radius: 12px; border-color: #d5dfec; box-shadow: 0 3px 10px rgba(27,47,78,.05); }
+.notif-row.unread { background: #edf3ff; border-left-color: #3156d8; }
+.notif-main:hover { background: #e1eaff; }
+.report-card, .attendance-panel, .attendance-employee, .dept-card {
+  border-color: #d5dfec;
+  box-shadow: 0 4px 14px rgba(27,47,78,.06);
+}
+
 .attendance-allowances { margin-top: 12px; }
 .attendance-over td { color: #b42318; font-weight: 600; }
 .attendance-leave-list { margin: 8px 0; padding-left: 18px; }

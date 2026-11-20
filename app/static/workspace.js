@@ -4,12 +4,13 @@
 (function () {
   const STATUS_LABEL = {
     open: "To Do", in_progress: "In Progress", delegated: "Delegated", waiting_on: "Review",
+    pending_approval: "Pending approval", changes_requested: "Changes requested", approved: "Approved",
     blocked: "Blocked", done: "Completed", cancelled: "Cancelled",
   };
   const COLUMNS = [
     { key: "todo", label: "To Do", drop: "open", statuses: ["open"] },
     { key: "progress", label: "In Progress", drop: "in_progress", statuses: ["in_progress", "delegated"] },
-    { key: "review", label: "Review", drop: "waiting_on", statuses: ["waiting_on", "blocked"] },
+    { key: "review", label: "Review", drop: "waiting_on", statuses: ["waiting_on", "blocked", "pending_approval", "changes_requested", "approved"] },
     { key: "done", label: "Completed", drop: "done", statuses: ["done", "cancelled"] },
   ];
   const SCOPES = {
@@ -400,7 +401,9 @@
           ${task ? `<div class="td-field"><span>Brand</span><strong class="td-brand-name">${esc(view.business_name || "General")}</strong></div>` : ""}
           <div class="td-field"><span>Due date</span><input type="date" name="deadline" form="drawer-form" value="${esc(fmtDate(view.deadline))}" ${canEdit ? "" : "disabled"} /></div>
           ${canEdit && !task ? `<div class="td-field"><span>Brand</span><select name="business_id" form="drawer-form" required>${state.businesses.map((b) => `<option value="${esc(b.id)}"${view.business_id === b.id ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select></div>` : ""}
-          ${canEdit && !task ? `<label class="td-field"><span>Approver</span><input name="approver_name" form="drawer-form" maxlength="160" placeholder="CEO, client, etc. (optional)" /></label>` : ""}
+          ${canEdit && !task ? `<label class="td-field"><span><input type="checkbox" name="requires_approval" form="drawer-form" /> Requires approval</span></label>
+            <label class="td-field"><span>Assign approval to</span><select name="approver_user_id" form="drawer-form"><option value="">Select approver</option>${state.members.filter((m) => m.id !== state.me?.id).map((m) => `<option value="${esc(m.id)}">${esc(m.display_name)}</option>`).join("")}</select></label>
+            <label class="td-field"><span>External approver (optional)</span><input name="approver_name" form="drawer-form" maxlength="160" placeholder="Client or outside reviewer" /></label>` : ""}
           ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>` : ""}
         </aside>`;
       panel.innerHTML = `
@@ -559,6 +562,8 @@
             ...body,
             business_id: fd.get("business_id") || null,
             approver_name: fd.get("approver_name") || "",
+            requires_approval: fd.get("requires_approval") === "on",
+            approver_user_id: fd.get("approver_user_id") || null,
           }));
           closeDrawer();
           afterChange();
