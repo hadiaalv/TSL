@@ -3,7 +3,7 @@
    Relies on globals from app.js ($, $$, api, esc, formatTimestamp, formatDuration, setStatus). */
 (function () {
   const STATUS_LABEL = {
-    open: "To Do", in_progress: "In Progress", delegated: "Delegated", waiting_on: "Review",
+    open: "To Do", in_progress: "In Progress", paused: "Paused", delegated: "Delegated", waiting_on: "Review",
     pending_approval: "Pending approval", changes_requested: "Changes requested", approved: "Approved",
     blocked: "Blocked", done: "Completed", cancelled: "Cancelled",
   };
@@ -330,12 +330,14 @@
     }
     let task = null;
     let comments = [];
+    let events = [];
     let deptMembers = [];
     if (taskId) {
       try {
-        [task, comments] = await Promise.all([
+        [task, comments, events] = await Promise.all([
           api(`/api/tasks/${encodeURIComponent(taskId)}`),
           api(`/api/tasks/${encodeURIComponent(taskId)}/comments`),
+          api(`/api/tasks/${encodeURIComponent(taskId)}/events`),
         ]);
       } catch (error) {
         toast(`Could not open task: ${error.message}`);
@@ -388,6 +390,9 @@
           <div class="td-field"><span>Status</span><select name="status" form="drawer-form" ${canStatus ? "" : "disabled"}>
             ${Object.entries(STATUS_LABEL).map(([k, v]) => `<option value="${k}"${view.status === k ? " selected" : ""}>${v}</option>`).join("")}
           </select></div>
+          <div class="td-field"><span>Priority</span><select name="priority" form="drawer-form" ${canEdit ? "" : "disabled"}>
+            ${[["P0", "Critical"], ["P1", "High"], ["P2", "Medium"], ["P3", "Low"]].map(([k, v]) => `<option value="${k}"${(view.priority || "P2") === k ? " selected" : ""}>${v}</option>`).join("")}
+          </select></div>
           <div class="td-field"><span>Assignees</span>
             <div class="assignee-chips">${draft.assignee_ids.map((id) => `<span class="assignee-chip"><span class="avatar">${esc(initials(nameOf(id)))}</span>${esc(nameOf(id))}${canEdit ? `<button type="button" data-remove-assignee="${esc(id)}" aria-label="Remove">×</button>` : ""}</span>`).join("") || `<span class="muted">Unassigned</span>`}</div>
             ${assignBlock}
@@ -404,7 +409,13 @@
           ${canEdit && !task ? `<label class="td-field"><span><input type="checkbox" name="requires_approval" form="drawer-form" /> Requires approval</span></label>
             <label class="td-field"><span>Assign approval to</span><select name="approver_user_id" form="drawer-form"><option value="">Select approver</option>${state.members.filter((m) => m.id !== state.me?.id).map((m) => `<option value="${esc(m.id)}">${esc(m.display_name)}</option>`).join("")}</select></label>
             <label class="td-field"><span>External approver (optional)</span><input name="approver_name" form="drawer-form" maxlength="160" placeholder="Client or outside reviewer" /></label>` : ""}
-          ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>` : ""}
+          ${task ? `<p class="muted drawer-time">⏱ Tracked: ${esc(formatDuration(task.tracked_seconds || 0))}${(task.running_timers || []).length ? ` · running: ${(task.running_timers || []).map((r) => esc(nameOf(r.user_id))).join(", ")}` : ""}<br />Your time is logged while you are an assignee and the task is In Progress.</p>
+            <div class="drawer-actions">
+              ${isAssignee && !task.acknowledged ? `<button type="button" class="primary-action" data-task-action="acknowledge">Acknowledge task</button>` : ""}
+              ${isAssignee && task.acknowledged && task.status === "open" ? `<button type="button" class="primary-action" data-task-action="start">Start working</button>` : ""}
+              ${isAssignee && task.status === "in_progress" ? `<button type="button" class="ghost" data-task-action="pause">Pause work</button>` : ""}
+              ${isAssignee && task.status === "paused" ? `<button type="button" class="primary-action" data-task-action="resume">Resume work</button>` : ""}
+            </div>` : ""}
         </aside>`;
       panel.innerHTML = `
         <header class="drawer-head">
@@ -434,6 +445,7 @@
           ${!task && canEdit ? `<div class="drawer-actions"><button type="submit" class="primary-action">Create task</button></div>` : ""}
         </form>
         ${task ? `<section class="drawer-comments">
+          <section class="drawer-section"><h4>Activity timeline</h4><ol class="task-timeline">${events.map((event) => `<li><strong>${esc(event.event_type.replace(/_/g, " "))}</strong><time>${esc(formatTimestamp(event.created_at))}</time>${event.actor_name ? `<span>${esc(event.actor_name)}</span>` : ""}</li>`).join("") || `<li class="muted">No activity yet.</li>`}</ol></section>
           <h4>Conversation <span class="muted">(${comments.length})</span></h4>
           <div class="comment-list">${comments.map((c) => `<article class="comment"><strong>${esc(c.author_display_name || c.author_username)}</strong> <time>${esc(formatTimestamp(c.created_at))}</time><p>${esc(c.content).replace(/(^|\s)@([\w.-]+)/g, '$1<span class="mention">@$2</span>')}</p></article>`).join("") || `<p class="muted">No comments yet.</p>`}</div>
           <form id="comment-form" class="comment-form">
@@ -464,6 +476,7 @@
           body.checklist = draft.checklist;
         }
         body.status = fd.get("status");
+        body.priority = fd.get("priority");
         return body;
       };
       const syncView = () => {
@@ -484,6 +497,13 @@
           if (reload) await openTask(task.id);
         }
       };
+      document.querySelectorAll("[data-task-action]").forEach((button) => button.addEventListener("click", async () => {
+        try {
+          await api(`/api/tasks/${encodeURIComponent(task.id)}/${button.dataset.taskAction}`, { method: "POST" });
+          await openTask(task.id);
+          afterChange();
+        } catch (error) { toast(error.message); }
+      }));
       const autosave = (name, build) => {
         if (!task) return;
         document.querySelectorAll(`#task-drawer-panel [name=${name}]`).forEach((el) => {
@@ -525,6 +545,7 @@
       autosave("description", (v) => ({ description: v }));
       autosave("deadline", (v) => ({ deadline: v || null }));
       autosave("status", (v) => ({ status: v }));
+      autosave("priority", (v) => ({ priority: v }));
       form.querySelectorAll("[data-check]").forEach((box) => box.addEventListener("change", () => {
         draft.checklist[Number(box.dataset.check)].done = box.checked;
         if (task) persist({ checklist: draft.checklist });

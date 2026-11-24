@@ -21,6 +21,7 @@ from app.config import settings
 TASK_STATUSES = (
     "open",
     "in_progress",
+    "paused",
     "waiting_on",
     "pending_approval",
     "changes_requested",
@@ -38,7 +39,7 @@ CLOSED_STATUSES = ("done", "cancelled")
 # Kanban columns and the raw task statuses each one groups.
 STATUS_GROUPS = {
     "todo": ("open",),
-    "in_progress": ("in_progress", "delegated"),
+    "in_progress": ("in_progress", "delegated", "paused"),
     "review": ("waiting_on", "blocked", "pending_approval", "changes_requested"),
     "completed": CLOSED_STATUSES,
 }
@@ -603,6 +604,40 @@ def _migrate_workspace(conn: sqlite3.Connection) -> None:
             last_read_at TEXT NOT NULL,
             PRIMARY KEY (user_id, task_id)
         )
+        """
+    )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS task_assignment_history (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id),
+            assigned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+            assigned_at TEXT NOT NULL,
+            unassigned_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_assignment_history_task
+            ON task_assignment_history(task_id, assigned_at);
+        CREATE TABLE IF NOT EXISTS task_acknowledgements (
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            acknowledged_at TEXT NOT NULL,
+            PRIMARY KEY (task_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_acknowledgements_user
+            ON task_acknowledgements(user_id, acknowledged_at);
+        CREATE TABLE IF NOT EXISTS task_events (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            actor_user_id TEXT REFERENCES users(id),
+            event_type TEXT NOT NULL,
+            previous_status TEXT,
+            new_status TEXT,
+            comment TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_events_task
+            ON task_events(task_id, created_at);
         """
     )
 
@@ -1900,6 +1935,30 @@ def create_task(
                 "VALUES (?, ?, ?, ?)",
                 (tid, user_id, actor_user_id, now),
             )
+            conn.execute(
+                """
+                INSERT INTO task_assignment_history
+                    (id, task_id, user_id, assigned_by, assigned_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (_uid(), tid, user_id, actor_user_id, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO task_events
+                    (id, task_id, actor_user_id, event_type, created_at)
+                VALUES (?, ?, ?, 'assigned', ?)
+                """,
+                (_uid(), tid, actor_user_id, now),
+            )
+        conn.execute(
+            """
+            INSERT INTO task_events
+                (id, task_id, actor_user_id, event_type, new_status, created_at)
+            VALUES (?, ?, ?, 'created', ?, ?)
+            """,
+            (_uid(), tid, actor_user_id, status, now),
+        )
     task = get_task(tid)
     if task and task["status"] in TIMER_STATUSES:
         start_task_timer(task, actor_user_id)
@@ -1989,6 +2048,22 @@ def _enrich_tasks(
         return tasks
     ids = [t["id"] for t in tasks]
     marks = ",".join("?" * len(ids))
+    acknowledged_at: dict[str, str] = {}
+    if viewer_id:
+        acknowledged_at = {
+            r["task_id"]: r["acknowledged_at"]
+            for r in conn.execute(
+                f"SELECT task_id, acknowledged_at FROM task_acknowledgements "
+                f"WHERE user_id = ? AND task_id IN ({marks})",
+                [viewer_id, *ids],
+            )
+        }
+    for task in tasks:
+        task["acknowledged_at"] = acknowledged_at.get(task["id"])
+        task["acknowledged"] = task["acknowledged_at"] is not None
+        task["acknowledgement_status"] = (
+            "acknowledged" if task["acknowledged"] else "awaiting_acknowledgement"
+        )
     assignees: dict[str, list[dict[str, Any]]] = {}
     for r in conn.execute(
         f"""
@@ -2073,7 +2148,11 @@ def get_task(
     vis, vis_params = _visibility_clause(viewer)
     where = "WHERE t.id = ?" + (f" AND {vis}" if vis else "")
     with connect() as conn:
-        rows = conn.execute(f"{_TASK_SELECT} {where}", [task_id, *vis_params]).fetchall()
+        viewer_id = viewer["id"] if viewer else None
+        rows = conn.execute(
+            f"{_TASK_SELECT} {where}",
+            [task_id, *vis_params],
+        ).fetchall()
         found = _enrich_tasks(conn, rows, viewer["id"] if viewer else None)
     return found[0] if found else None
 
@@ -2091,6 +2170,14 @@ def list_tasks(
     viewer: Optional[dict[str, Any]] = None,
     created_from: Optional[str] = None,
     window: Optional[tuple[str, str]] = None,
+    search: Optional[str] = None,
+    creator_id: Optional[str] = None,
+    assigned_from: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    due_from: Optional[str] = None,
+    due_to: Optional[str] = None,
+    acknowledgement: Optional[str] = None,
+    overdue: bool = False,
 ) -> list[dict[str, Any]]:
     """List tasks.
 
@@ -2122,6 +2209,31 @@ def list_tasks(
     if priority:
         clauses.append("t.priority = ?")
         params.append(priority)
+    if search:
+        clauses.append("(t.title LIKE ? OR t.notes LIKE ? OR b.name LIKE ?)")
+        search_value = f"%{search}%"
+        params.extend([search_value, search_value, search_value])
+    if creator_id:
+        clauses.append("t.created_by = ?")
+        params.append(creator_id)
+    if assigned_from:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM task_assignment_history af "
+            "WHERE af.task_id = t.id AND af.assigned_at >= ?)"
+        )
+        params.append(assigned_from)
+    if assigned_to:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM task_assignment_history at "
+            "WHERE at.task_id = t.id AND at.assigned_at <= ?)"
+        )
+        params.append(assigned_to)
+    if due_from:
+        clauses.append("t.deadline IS NOT NULL AND substr(t.deadline, 1, 10) >= ?")
+        params.append(due_from)
+    if due_to:
+        clauses.append("t.deadline IS NOT NULL AND substr(t.deadline, 1, 10) <= ?")
+        params.append(due_to)
     if assignee_id:
         clauses.append("EXISTS (SELECT 1 FROM task_assignees fa WHERE fa.task_id = t.id AND fa.user_id = ?)")
         params.append(assignee_id)
@@ -2135,10 +2247,21 @@ def list_tasks(
         clauses.append("t.status NOT IN ('done', 'cancelled')")
     elif view == "completed":
         clauses.append("t.status IN ('done', 'cancelled')")
-    elif view == "overdue":
+    elif view == "overdue" or overdue:
         clauses.append("t.deadline IS NOT NULL AND t.deadline != '' AND substr(t.deadline, 1, 10) < ?")
         params.append(date.today().isoformat())
         clauses.append("t.status NOT IN ('done', 'cancelled')")
+    if acknowledgement in ("acknowledged", "unacknowledged"):
+        if not viewer:
+            return []
+        exists = (
+            "EXISTS" if acknowledgement == "acknowledged" else "NOT EXISTS"
+        )
+        clauses.append(
+            f"{exists} (SELECT 1 FROM task_acknowledgements ta "
+            "WHERE ta.task_id = t.id AND ta.user_id = ?)"
+        )
+        params.append(viewer["id"])
     if created_from:
         clauses.append("t.created_at >= ?")
         params.append(created_from)
@@ -2221,6 +2344,22 @@ def set_task_assignees(
                 "INSERT INTO task_assignees (task_id, user_id, assigned_by, assigned_at) VALUES (?, ?, ?, ?)",
                 (task_id, user_id, assigned_by, now),
             )
+            conn.execute(
+                """
+                INSERT INTO task_assignment_history
+                    (id, task_id, user_id, assigned_by, assigned_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (_uid(), task_id, user_id, assigned_by, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO task_events
+                    (id, task_id, actor_user_id, event_type, created_at)
+                VALUES (?, ?, ?, 'assigned', ?)
+                """,
+                (_uid(), task_id, assigned_by, now),
+            )
         for user_id in removed:
             conn.execute(
                 "DELETE FROM task_assignees WHERE task_id = ? AND user_id = ?", (task_id, user_id)
@@ -2229,6 +2368,22 @@ def set_task_assignees(
                 "UPDATE task_time_entries SET ended_at = ? "
                 "WHERE task_id = ? AND user_id = ? AND ended_at IS NULL",
                 (now, task_id, user_id),
+            )
+            conn.execute(
+                """
+                UPDATE task_assignment_history
+                SET unassigned_at = ?
+                WHERE task_id = ? AND user_id = ? AND unassigned_at IS NULL
+                """,
+                (now, task_id, user_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO task_events
+                    (id, task_id, actor_user_id, event_type, created_at)
+                VALUES (?, ?, ?, 'unassigned', ?)
+                """,
+                (_uid(), task_id, assigned_by, now),
             )
         if added or removed:
             first = wanted[0] if wanted else None
@@ -2306,6 +2461,24 @@ def update_task(
         set_task_assignees(task_id, [], actor_user_id)
     task = get_task(task_id)
     if previous and task:
+        if previous["status"] != task["status"]:
+            with connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO task_events
+                        (id, task_id, actor_user_id, event_type,
+                         previous_status, new_status, created_at)
+                    VALUES (?, ?, ?, 'status_changed', ?, ?, ?)
+                    """,
+                    (
+                        _uid(),
+                        task_id,
+                        actor_user_id,
+                        previous["status"],
+                        task["status"],
+                        _now(),
+                    ),
+                )
         was_running = previous["status"] in TIMER_STATUSES
         is_running = task["status"] in TIMER_STATUSES
         if is_running and not was_running:
@@ -2313,6 +2486,53 @@ def update_task(
         elif was_running and not is_running:
             stop_task_timers(task_id)
     return get_task(task_id) if task else task
+
+
+def acknowledge_task(task_id: str, user_id: str) -> Optional[dict[str, Any]]:
+    """Record an explicit acknowledgement once for an active assignee."""
+    now = _now()
+    with connect() as conn:
+        if not conn.execute(
+            "SELECT 1 FROM task_assignees WHERE task_id = ? AND user_id = ?",
+            (task_id, user_id),
+        ).fetchone():
+            return None
+        inserted = conn.execute(
+            """
+            INSERT OR IGNORE INTO task_acknowledgements
+                (task_id, user_id, acknowledged_at)
+            VALUES (?, ?, ?)
+            """,
+            (task_id, user_id, now),
+        )
+        if inserted.rowcount:
+            conn.execute(
+                """
+                INSERT INTO task_events
+                    (id, task_id, actor_user_id, event_type, created_at)
+                VALUES (?, ?, ?, 'acknowledged', ?)
+                """,
+                (_uid(), task_id, user_id, now),
+            )
+    return get_task(task_id, viewer=get_user(user_id))
+
+
+def list_task_events(task_id: str, viewer: Optional[dict[str, Any]] = None) -> list[dict[str, Any]]:
+    task = get_task(task_id, viewer=viewer)
+    if not task:
+        return []
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT e.*, COALESCE(u.display_name, u.username) AS actor_name
+            FROM task_events e
+            LEFT JOIN users u ON u.id = e.actor_user_id
+            WHERE e.task_id = ?
+            ORDER BY e.created_at, e.id
+            """,
+            (task_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 # ── Task time tracking ───────────────────────────────────────

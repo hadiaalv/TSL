@@ -1302,6 +1302,14 @@ def tasks(
     department_id: Optional[str] = None,
     assignee_id: Optional[str] = None,
     priority: Optional[str] = None,
+    search: Optional[str] = None,
+    creator_id: Optional[str] = None,
+    assigned_from: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    due_from: Optional[str] = None,
+    due_to: Optional[str] = None,
+    acknowledgement: Optional[str] = None,
+    overdue: bool = False,
     view: Optional[str] = None,
     limit: int = 300,
 ) -> list[dict[str, Any]]:
@@ -1315,10 +1323,69 @@ def tasks(
         department_id=department_id,
         assignee_id=assignee_id,
         priority=priority,
+        search=search,
+        creator_id=creator_id,
+        assigned_from=assigned_from,
+        assigned_to=assigned_to,
+        due_from=due_from,
+        due_to=due_to,
+        acknowledgement=acknowledgement,
+        overdue=overdue,
         view=view,
         viewer=user,
         limit=max(1, min(limit, 1000)),
     )
+
+
+@app.get("/api/tasks/{task_id}/events")
+def task_events(request: Request, task_id: str) -> list[dict[str, Any]]:
+    user = auth.require_user(request)
+    _visible_task(user, task_id)
+    return db.list_task_events(task_id, viewer=user)
+
+
+@app.post("/api/tasks/{task_id}/acknowledge")
+def acknowledge_task(request: Request, task_id: str) -> dict[str, Any]:
+    user = auth.require_user(request)
+    task = _visible_task(user, task_id)
+    if not db.user_is_task_assignee(str(user["id"]), task_id):
+        raise HTTPException(403, "Only assignees can acknowledge this task")
+    acknowledged = db.acknowledge_task(task_id, str(user["id"]))
+    if not acknowledged:
+        raise HTTPException(409, "Task is no longer assigned to you")
+    return acknowledged
+
+
+@app.post("/api/tasks/{task_id}/start")
+def start_task(request: Request, task_id: str) -> dict[str, Any]:
+    user = auth.require_user(request)
+    task = _visible_task(user, task_id)
+    if not db.user_is_task_assignee(str(user["id"]), task_id):
+        raise HTTPException(403, "Only assignees can start this task")
+    if not task.get("acknowledged"):
+        raise HTTPException(409, "Acknowledge the task before starting work")
+    updated = db.update_task(task_id, status="in_progress", actor_user_id=str(user["id"]))
+    return updated or task
+
+
+@app.post("/api/tasks/{task_id}/pause")
+def pause_task(request: Request, task_id: str) -> dict[str, Any]:
+    user = auth.require_user(request)
+    task = _visible_task(user, task_id)
+    if not db.user_is_task_assignee(str(user["id"]), task_id):
+        raise HTTPException(403, "Only assignees can pause this task")
+    updated = db.update_task(task_id, status="paused", actor_user_id=str(user["id"]))
+    return updated or task
+
+
+@app.post("/api/tasks/{task_id}/resume")
+def resume_task(request: Request, task_id: str) -> dict[str, Any]:
+    user = auth.require_user(request)
+    task = _visible_task(user, task_id)
+    if not db.user_is_task_assignee(str(user["id"]), task_id):
+        raise HTTPException(403, "Only assignees can resume this task")
+    updated = db.update_task(task_id, status="in_progress", actor_user_id=str(user["id"]))
+    return updated or task
 
 
 @app.get("/api/tasks/{task_id}")

@@ -13,6 +13,7 @@
   const STATUS_LABEL = {
     open: "Open",
     in_progress: "In progress",
+    paused: "Paused",
     waiting_on: "Waiting",
     pending_approval: "Pending approval",
     changes_requested: "Changes requested",
