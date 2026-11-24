@@ -2564,19 +2564,8 @@ def google_status(
     return {
         **status,
         **verify_drive_access(str(user["id"])),
-        "redirect_uri": _google_request_redirect_uri(request),
+        "redirect_uri": settings.effective_google_redirect_uri,
     }
-
-
-def _google_request_redirect_uri(request: Request) -> str:
-    """Use the public origin from which OAuth was started, with proxy headers respected."""
-    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
-    forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
-    host = forwarded_host or request.headers.get("host") or ""
-    scheme = forwarded_proto or request.url.scheme
-    if host:
-        return f"{scheme}://{host.rstrip('/')}/api/google/callback"
-    return settings.effective_google_redirect_uri
 
 
 @app.get("/api/google/auth")
@@ -2589,7 +2578,7 @@ def google_auth(
         return RedirectResponse(
             _google().auth_url(
                 user_id=str(user["id"]),
-                redirect_uri=_google_request_redirect_uri(request),
+                redirect_uri=settings.effective_google_redirect_uri,
             )
         )
     except RuntimeError as e:
