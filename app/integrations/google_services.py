@@ -39,8 +39,8 @@ class GoogleConnectionError(RuntimeError):
         self.requires_reconnect = requires_reconnect
 
 
-# state -> (user_id, code_verifier, expiry)
-_PENDING_OAUTH_FLOWS: dict[str, tuple[str, str, float]] = {}
+# state -> (user_id, code_verifier, expiry, redirect_uri)
+_PENDING_OAUTH_FLOWS: dict[str, tuple[str, str, float, str]] = {}
 
 
 def google_configured() -> bool:
@@ -50,6 +50,7 @@ def google_configured() -> bool:
 def get_flow(
     code_verifier: Optional[str] = None,
     state: Optional[str] = None,
+    redirect_uri: Optional[str] = None,
 ):
     from google_auth_oauthlib.flow import Flow
 
@@ -65,7 +66,7 @@ def get_flow(
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [
-                settings.effective_google_redirect_uri
+                redirect_uri or settings.effective_google_redirect_uri
             ],
         }
     }
@@ -78,22 +79,24 @@ def get_flow(
         state=state,
     )
 
-    flow.redirect_uri = settings.effective_google_redirect_uri
+    flow.redirect_uri = redirect_uri or settings.effective_google_redirect_uri
 
     return flow
 
 
-def auth_url(user_id: str) -> str:
+def auth_url(user_id: str, redirect_uri: Optional[str] = None) -> str:
     now = time()
 
     # Remove expired pending OAuth flows.
-    for old_state, (_, _, expires_at) in list(
+    for old_state, pending in list(
         _PENDING_OAUTH_FLOWS.items()
     ):
+        expires_at = pending[2] if len(pending) >= 3 else 0
         if expires_at <= now:
             _PENDING_OAUTH_FLOWS.pop(old_state, None)
 
-    flow = get_flow()
+    effective_redirect_uri = redirect_uri or settings.effective_google_redirect_uri
+    flow = get_flow(redirect_uri=effective_redirect_uri)
 
     url, state = flow.authorization_url(
         access_type="offline",
@@ -113,6 +116,7 @@ def auth_url(user_id: str) -> str:
         str(user_id),
         verifier,
         now + 600,
+        effective_redirect_uri,
     )
 
     return url
@@ -131,7 +135,11 @@ def exchange_code(
             "Start a fresh attempt."
         )
 
-    user_id, code_verifier, expires_at = pending
+    if len(pending) == 4:
+        user_id, code_verifier, expires_at, redirect_uri = pending
+    else:
+        user_id, code_verifier, expires_at = pending
+        redirect_uri = settings.effective_google_redirect_uri
 
     if expires_at <= time():
         raise RuntimeError(
@@ -142,6 +150,7 @@ def exchange_code(
         flow = get_flow(
             code_verifier=code_verifier,
             state=state,
+            redirect_uri=redirect_uri,
         )
 
         flow.fetch_token(code=code)

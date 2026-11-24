@@ -638,6 +638,37 @@ def _migrate_workspace(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_task_events_task
             ON task_events(task_id, created_at);
+        CREATE TABLE IF NOT EXISTS announcements (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            importance TEXT NOT NULL DEFAULT 'normal',
+            audience TEXT NOT NULL DEFAULT 'all',
+            pinned INTEGER NOT NULL DEFAULT 0,
+            attachment_url TEXT NOT NULL DEFAULT '',
+            publish_at TEXT,
+            expires_at TEXT,
+            created_by TEXT REFERENCES users(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_announcements_publish
+            ON announcements(publish_at, expires_at);
+        CREATE TABLE IF NOT EXISTS announcement_departments (
+            announcement_id TEXT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+            department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+            PRIMARY KEY (announcement_id, department_id)
+        );
+        CREATE TABLE IF NOT EXISTS announcement_users (
+            announcement_id TEXT NOT NULL REFERENCES announcements(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            received_at TEXT NOT NULL,
+            read_at TEXT,
+            acknowledged_at TEXT,
+            PRIMARY KEY (announcement_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_announcement_users_user
+            ON announcement_users(user_id, acknowledged_at);
         """
     )
 
@@ -2068,8 +2099,9 @@ def _enrich_tasks(
     for r in conn.execute(
         f"""
         SELECT a.task_id, u.id, u.username, COALESCE(NULLIF(u.display_name, ''), u.username) AS display_name,
-               u.status
+               u.status, a.assigned_at, ak.acknowledged_at
         FROM task_assignees a JOIN users u ON u.id = a.user_id
+        LEFT JOIN task_acknowledgements ak ON ak.task_id = a.task_id AND ak.user_id = a.user_id
         WHERE a.task_id IN ({marks}) ORDER BY a.assigned_at, u.username
         """,
         ids,
@@ -2080,6 +2112,8 @@ def _enrich_tasks(
                 "username": r["username"],
                 "display_name": r["display_name"],
                 "status": r["status"],
+                "assigned_at": r["assigned_at"],
+                "acknowledged_at": r["acknowledged_at"],
             }
         )
     approvals = {
@@ -2449,7 +2483,7 @@ def update_task(
         if legacy_owner:
             assignee_ids = [legacy_owner["id"]]
     updates.pop("owner", None)
-    previous = get_task(task_id) if "status" in updates else None
+    previous = get_task(task_id) if ({"status", "priority"} & set(updates)) else None
     if updates:
         updates["updated_at"] = _now()
         cols = ", ".join(f"{k} = ?" for k in updates)
@@ -2461,6 +2495,17 @@ def update_task(
         set_task_assignees(task_id, [], actor_user_id)
     task = get_task(task_id)
     if previous and task:
+        if previous.get("priority") != task.get("priority"):
+            with connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO task_events
+                        (id, task_id, actor_user_id, event_type, comment, created_at)
+                    VALUES (?, ?, ?, 'priority_changed', ?, ?)
+                    """,
+                    (_uid(), task_id, actor_user_id,
+                     f"{previous.get('priority')}->{task.get('priority')}", _now()),
+                )
         if previous["status"] != task["status"]:
             with connect() as conn:
                 conn.execute(
@@ -2859,7 +2904,10 @@ def notify_user(
     task_id: Optional[str] = None,
     target_url: str = "/",
 ) -> bool:
-    if event_type not in ("approval", "admin"):
+    if event_type not in (
+        "approval", "admin", "priority", "acknowledgement",
+        "task_update", "deadline", "announcement",
+    ):
         raise ValueError("Unsupported user notification type")
     with connect() as conn:
         row = conn.execute(
@@ -3053,6 +3101,175 @@ def create_slack_notification(
     return get_notification(notification_id, user_id)
 
 
+def create_announcement(
+    *,
+    title: str,
+    content: str = "",
+    importance: str = "normal",
+    audience: str = "all",
+    department_ids: Optional[list[str]] = None,
+    user_ids: Optional[list[str]] = None,
+    attachment_url: str = "",
+    publish_at: Optional[str] = None,
+    expires_at: Optional[str] = None,
+    pinned: bool = False,
+    created_by: str,
+) -> dict[str, Any]:
+    aid = _uid()
+    now = _now()
+    publish_at = publish_at or now
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO announcements
+                (id, title, content, importance, audience, pinned, attachment_url,
+                 publish_at, expires_at, created_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (aid, title, content, importance, audience, 1 if pinned else 0,
+             attachment_url, publish_at, expires_at, created_by, now, now),
+        )
+        targeted: list[str] = []
+        if audience == "departments":
+            marks = ",".join("?" * len(set(department_ids or [])))
+            if marks:
+                for dept_id in dict.fromkeys(department_ids or []):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO announcement_departments (announcement_id, department_id) "
+                        "VALUES (?, ?)",
+                        (aid, dept_id),
+                    )
+                rows = conn.execute(
+                    f"""
+                    SELECT DISTINCT dm.user_id FROM department_members dm
+                    JOIN users u ON u.id = dm.user_id
+                    WHERE dm.department_id IN ({marks}) AND u.status = 'active'
+                    """,
+                    list(dict.fromkeys(department_ids or [])),
+                ).fetchall()
+                targeted = [r["user_id"] for r in rows]
+        elif audience == "users":
+            for uid in dict.fromkeys(user_ids or []):
+                conn.execute(
+                    "INSERT OR IGNORE INTO announcement_users "
+                    "(announcement_id, user_id, received_at) VALUES (?, ?, ?)",
+                    (aid, uid, now),
+                )
+            targeted = list(dict.fromkeys(user_ids or []))
+        else:
+            audience = "all"
+            rows = conn.execute(
+                "SELECT id FROM users WHERE status = 'active'"
+            ).fetchall()
+            targeted = [r["id"] for r in rows]
+        for uid in targeted:
+            conn.execute(
+                "INSERT OR IGNORE INTO announcement_users "
+                "(announcement_id, user_id, received_at) VALUES (?, ?, ?)",
+                (aid, uid, now),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO notifications
+                    (id, recipient_user_id, actor_user_id, notification_type, source_id,
+                     title, body, target_url, created_at)
+                VALUES (?, ?, ?, 'announcement', ?, ?, ?, ?, ?)
+                """,
+                (_uid(), uid, created_by, aid, f"Announcement: {title}",
+                 content[:500], f"/?announcement={aid}", now),
+            )
+    return get_announcement(aid)
+
+
+def get_announcement(announcement_id: str) -> Optional[dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM announcements WHERE id = ?", (announcement_id,)
+        ).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        result["department_ids"] = [
+            r["department_id"] for r in conn.execute(
+                "SELECT department_id FROM announcement_departments WHERE announcement_id = ?",
+                (announcement_id,),
+            )
+        ]
+        result["recipient_stats"] = announcement_recipient_stats(announcement_id)
+    return result
+
+
+def list_announcements(viewer: dict[str, Any]) -> list[dict[str, Any]]:
+    uid = viewer["id"]
+    with connect() as conn:
+        if viewer.get("role") == "super_admin":
+            rows = conn.execute(
+                """
+                SELECT a.*, NULL AS received_at, NULL AS read_at, NULL AS acknowledged_at
+                FROM announcements a
+                WHERE (a.publish_at IS NULL OR a.publish_at <= ?)
+                  AND (a.expires_at IS NULL OR a.expires_at >= ?)
+                ORDER BY a.pinned DESC, a.publish_at DESC
+                """,
+                (_now(), _now()),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT a.*, au.received_at, au.read_at, au.acknowledged_at
+                FROM announcements a
+                JOIN announcement_users au ON au.announcement_id = a.id AND au.user_id = ?
+                WHERE (a.publish_at IS NULL OR a.publish_at <= ?)
+                  AND (a.expires_at IS NULL OR a.expires_at >= ?)
+                ORDER BY a.pinned DESC, a.publish_at DESC
+                """,
+                (uid, _now(), _now()),
+            ).fetchall()
+    result = [dict(r) for r in rows]
+    if viewer.get("role") == "super_admin":
+        for item in result:
+            item["recipient_stats"] = announcement_recipient_stats(item["id"])
+    return result
+
+
+def acknowledge_announcement(announcement_id: str, user_id: str) -> bool:
+    now = _now()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE announcement_users
+            SET read_at = COALESCE(read_at, ?), acknowledged_at = COALESCE(acknowledged_at, ?)
+            WHERE announcement_id = ? AND user_id = ?
+            """,
+            (now, now, announcement_id, user_id),
+        )
+        return cur.rowcount == 1
+
+
+def announcement_recipient_stats(announcement_id: str) -> dict[str, Any]:
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT au.*, COALESCE(u.display_name, u.username) AS user_name
+            FROM announcement_users au
+            JOIN users u ON u.id = au.user_id
+            WHERE au.announcement_id = ?
+            ORDER BY user_name
+            """,
+            (announcement_id,),
+        ).fetchall()
+    recipients = [dict(r) for r in rows]
+    read = sum(bool(r["acknowledged_at"] or r["read_at"]) for r in recipients)
+    acknowledged = sum(bool(r["acknowledged_at"]) for r in recipients)
+    return {
+        "targeted": len(recipients),
+        "read": read,
+        "acknowledged": acknowledged,
+        "unread": len(recipients) - read,
+        "employees": recipients,
+    }
+
+
 def create_task_assignment_notification(
     task_id: str,
     owner_username: str,
@@ -3084,7 +3301,8 @@ def list_notifications(
 ) -> list[dict[str, Any]]:
     clauses = [
         "n.recipient_user_id = ?",
-        "n.notification_type IN ('assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack')",
+        "n.notification_type IN ('assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack', "
+        "'priority', 'acknowledgement', 'task_update', 'deadline', 'announcement')",
     ]
     params: list[Any] = [user_id]
     if unread_only or read_filter == "unread":

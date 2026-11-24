@@ -168,7 +168,7 @@ function initSidebarState() {
 const PAGES = {
   home: "Dashboard", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Attendance", calendar: "Calendar",
   ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Settings",
-  workspace: "Tasks", notifications: "Notifications", reports: "Reports", deptmgmt: "Department Management",
+  workspace: "Tasks", notifications: "Notifications", announcements: "Announcements", reports: "Reports", deptmgmt: "Department Management",
 };
 
 function formatDuration(totalSeconds) {
@@ -219,7 +219,7 @@ function routeAllowedForRole(route) {
   if (route.view === "brand") {
     return businessesCache.some((business) => business.id === route.businessId);
   }
-  return ["home", "brands", "work", "timelog", "attendance", "notifications"].includes(route.view);
+  return ["home", "brands", "work", "timelog", "attendance", "notifications", "announcements"].includes(route.view);
 }
 
 function setRoute(route, { replace = false } = {}) {
@@ -1329,6 +1329,9 @@ async function refreshGoogle() {
     el.textContent = "Add Google client id/secret on the server";
     link.classList.add("btn-connect-secondary");
     disc?.classList.add("hidden");
+  }
+  if (st.redirect_uri) {
+    el.textContent += `\nOAuth callback: ${st.redirect_uri}`;
   }
 }
 

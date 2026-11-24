@@ -41,6 +41,7 @@
         <p class="nav-label">Activity</p>
         <a href="#approvals" data-route="approvals" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span>Approvals</span></a>
         <a href="#notifications" data-route="notifications" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><span>Notifications</span><em id="count-notifications" class="count-badge hidden">0</em></a>
+        <a href="#announcements" data-route="announcements" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true">📢</span><span>Announcements</span></a>
         <a href="#attendance" data-route="attendance" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/></svg></span><span>Office Attendance</span></a>
         <a href="#timelog" data-route="timelog" class="sidebar-nav-link"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time Logs</span></a>
         <a href="#calendar" data-route="calendar" class="sidebar-nav-link admin-only hidden"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg></span><span>Calendar</span></a>
@@ -241,6 +242,10 @@
 
       <section id="notifications-view" class="page-view hidden">
         <div id="notifications-root" class="ws-root"></div>
+      </section>
+
+      <section id="announcements-view" class="page-view hidden">
+        <div id="announcements-root" class="ws-root"></div>
       </section>
 
       <section id="reports-view" class="page-view hidden">
@@ -508,9 +513,9 @@
   </aside>
 
   <script src="/static/emoji.js?v=20261025-emoji"></script>
-  <script src="/static/app.js?v=20261029-attendance2"></script>
-  <script src="/static/workspace.js?v=20261102-responsive1"></script>
+  <script src="/static/app.js?v=20261124-operations2"></script>
+  <script src="/static/workspace.js?v=20261124-operations2"></script>
   <script src="/static/attendance.js?v=20261030-dash1"></script>
-  <script src="/static/dashboard.js?v=20261030-dash1"></script>
+  <script src="/static/dashboard.js?v=20261124-operations2"></script>
 </body>
 </html>

@@ -32,7 +32,7 @@
     businesses: [],
     reminderShown: false,
     route: null,
-    filters: { department: "", assignee: "", business: "", text: "" },
+    filters: { department: "", assignee: "", business: "", text: "", priority: "", status: "", due: "", overdue: false },
     tasks: [],
     notifFilter: "all",
     drawerTaskId: null,
@@ -150,6 +150,7 @@
     if (!state.me) return;
     if (route.view === "workspace") renderWorkspace().catch((e) => toast(e.message));
     else if (route.view === "notifications") renderNotifications().catch((e) => toast(e.message));
+    else if (route.view === "announcements") renderAnnouncements().catch((e) => toast(e.message));
     else if (route.view === "reports") renderReports();
     else if (route.view === "deptmgmt") renderDeptMgmt().catch((e) => toast(e.message));
     if (route.view === "workspace") {
@@ -175,6 +176,13 @@
     }
     if (f.business) p.set("business_id", f.business);
     if (f.assignee && state.canManageTasks) p.set("assignee_id", f.assignee);
+    if (f.priority) p.set("priority", f.priority);
+    if (f.status) p.set("status", f.status);
+    if (f.overdue) p.set("overdue", "true");
+    if (f.due === "today") {
+      p.set("due_from", today());
+      p.set("due_to", today());
+    }
     return p.toString();
   }
 
@@ -202,6 +210,11 @@
         <select id="ws-business" aria-label="Brand"><option value="">All brands</option>${state.businesses.map((b) => `<option value="${esc(b.id)}"${f.business === b.id ? " selected" : ""}>${esc(b.name)}</option>`).join("")}</select>
         ${isDept ? "" : `<select id="ws-dept" aria-label="Department"><option value="">All departments</option>${state.departments.map((d) => `<option value="${esc(d.id)}"${f.department === d.id ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select>`}
         ${state.canManageTasks ? `<select id="ws-assignee" aria-label="Assignee"><option value="">Anyone</option>${state.members.map((m) => `<option value="${esc(m.id)}"${f.assignee === m.id ? " selected" : ""}>${esc(m.display_name)}</option>`).join("")}</select>` : ""}
+        <select id="ws-priority" aria-label="Priority"><option value="">Any priority</option>${[["P0","Critical"],["P1","High"],["P2","Medium"],["P3","Low"]].map(([v,l]) => `<option value="${v}"${f.priority===v?" selected":""}>${l}</option>`).join("")}</select>
+        <select id="ws-status" aria-label="Status"><option value="">Any status</option>${Object.entries(STATUS_LABEL).map(([v,l]) => `<option value="${v}"${f.status===v?" selected":""}>${l}</option>`).join("")}</select>
+        <select id="ws-due" aria-label="Due date"><option value="">Any due date</option><option value="today"${f.due==="today"?" selected":""}>Due today</option></select>
+        <label class="ws-overdue"><input type="checkbox" id="ws-overdue"${f.overdue?" checked":""}/> Overdue only</label>
+        <button type="button" class="ghost" id="ws-clear-filters">Clear filters</button>
       </div>
       <div id="ws-board" class="ws-board" aria-live="polite"><p class="muted">Loading tasks…</p></div>`;
     $("#ws-new-task")?.addEventListener("click", () => openTask(null, { department_id: isDept ? route.departmentId : "" }));
@@ -209,6 +222,15 @@
     ["ws-business:business", "ws-dept:department", "ws-assignee:assignee"].forEach((pair) => {
       const [id, key] = pair.split(":");
       $(`#${id}`)?.addEventListener("change", (e) => { state.filters[key] = e.target.value; renderWorkspace(); });
+    });
+    ["ws-priority:priority", "ws-status:status", "ws-due:due"].forEach((pair) => {
+      const [id, key] = pair.split(":");
+      $(`#${id}`)?.addEventListener("change", (e) => { state.filters[key] = e.target.value; renderWorkspace(); });
+    });
+    $("#ws-overdue")?.addEventListener("change", (e) => { state.filters.overdue = e.target.checked; renderWorkspace(); });
+    $("#ws-clear-filters")?.addEventListener("click", () => {
+      state.filters = { department: "", assignee: "", business: "", text: "", priority: "", status: "", due: "", overdue: false };
+      renderWorkspace();
     });
     try {
       state.tasks = await api(`/api/tasks?${taskQuery(route)}`);
@@ -231,7 +253,7 @@
     return `<article class="ws-card" draggable="${canMove}" tabindex="0" data-id="${esc(t.id)}" data-status="${esc(t.status)}">
       <div class="ws-card-top">${deptChip(t.department_id, t.department_name, t.department_color)}
         <span class="brand-chip"><span class="brand-chip-label">Brand:</span> ${esc(businessName)}</span>
-        ${["P0", "P1"].includes(t.priority) ? `<span class="priority-pill priority-${esc(t.priority.toLowerCase())}">${esc(t.priority)}</span>` : ""}
+        ${t.priority ? `<span class="priority-pill priority-${esc(t.priority.toLowerCase())}" title="${esc({P0:"Critical",P1:"High",P2:"Medium",P3:"Low"}[t.priority] || t.priority)}">${esc(t.priority)}</span>` : ""}
       </div>
       <h4>${esc(t.title)}</h4>
       <div class="ws-card-meta">
@@ -259,6 +281,7 @@
         ${canQuickAdd ? `<form class="ws-quick-add" data-status="${col.drop}">
           <input name="title" maxlength="300" placeholder="＋ Add a task" aria-label="Add a task to ${col.label}" autocomplete="off" />
           <select name="business_id" aria-label="Brand" required>${state.businesses.map((business) => `<option value="${esc(business.id)}"${business.id === (state.filters.business || state.businesses.find((item) => item.slug === "general")?.id || state.businesses[0]?.id) ? " selected" : ""}>${esc(business.name)}</option>`).join("")}</select>
+          <select name="priority" aria-label="Priority"><option value="P0">Critical</option><option value="P1">High</option><option value="P2" selected>Medium</option><option value="P3">Low</option></select>
           <input name="approver_name" maxlength="160" placeholder="Approver (optional)" aria-label="External approver" />
         </form>` : ""}
       </section>`;
@@ -274,6 +297,7 @@
           status: form.dataset.status,
           department_id: state.route.departmentId,
           business_id: form.elements.business_id.value,
+          priority: form.elements.priority.value,
           approver_name: form.elements.approver_name.value.trim(),
         }));
         await renderWorkspace();
@@ -686,6 +710,75 @@
         if (id) await openTask(id);
         renderNotifications().catch(() => {});
       });
+    });
+  }
+
+  // ── Announcements ─────────────────────────────────────────
+  async function renderAnnouncements() {
+    const root = $("#announcements-root");
+    if (!root) return;
+    const items = await api("/api/announcements");
+    const canPublish = state.isSA;
+    root.innerHTML = `
+      <div class="ws-head"><div><span class="eyebrow">Company news</span><h2>Announcements</h2></div>
+        ${canPublish ? `<button type="button" class="primary-action" id="announcement-create">+ New announcement</button>` : ""}
+      </div>
+      ${items.length ? items.map((item) => `
+        <article class="announcement-card${item.pinned ? " pinned" : ""}">
+          ${item.pinned ? '<span class="priority-pill">Pinned</span>' : ""}
+          <h3>${esc(item.title)}</h3>
+          <p>${esc(item.content || "No description")}</p>
+          <div class="announcement-meta">
+            <span>${esc(item.importance)} · ${esc(formatTimestamp(item.publish_at))}</span>
+            ${item.attachment_url ? `<a href="${esc(item.attachment_url)}" target="_blank" rel="noopener noreferrer">Attachment</a>` : ""}
+          </div>
+          ${canPublish && item.recipient_stats ? `<div class="announcement-stats">Targeted ${item.recipient_stats.targeted} · Read ${item.recipient_stats.read} · Unread ${item.recipient_stats.unread}</div>` : ""}
+          ${!canPublish ? `<button type="button" class="ghost" data-announcement-read="${esc(item.id)}"${item.acknowledged_at ? " disabled" : ""}>${item.acknowledged_at ? "Acknowledged" : "Mark as read"}</button>` : ""}
+        </article>`).join("") : '<p class="muted">No announcements.</p>'}`;
+    root.querySelectorAll("[data-announcement-read]").forEach((button) => button.addEventListener("click", async () => {
+      await api(`/api/announcements/${encodeURIComponent(button.dataset.announcementRead)}/read`, json("POST"));
+      await renderAnnouncements();
+      refreshNotifications();
+    }));
+    $("#announcement-create")?.addEventListener("click", () => openAnnouncementForm(root));
+  }
+
+  function openAnnouncementForm(root) {
+    const departmentOptions = state.departments.map((d) => `<label><input type="checkbox" name="department_ids" value="${esc(d.id)}"> ${esc(d.name)}</label>`).join("");
+    root.insertAdjacentHTML("afterbegin", `
+      <form id="announcement-form" class="announcement-form">
+        <h3>Publish announcement</h3>
+        <label>Title<input name="title" required maxlength="160"></label>
+        <label>Content<textarea name="content" rows="5" maxlength="20000"></textarea></label>
+        <label>Importance<select name="importance"><option value="normal">Normal</option><option value="important">Important</option><option value="critical">Critical</option></select></label>
+        <label>Audience<select name="audience" id="announcement-audience"><option value="all">All employees</option><option value="departments">Selected departments</option><option value="users">Selected employees</option></select></label>
+        <fieldset id="announcement-departments"><legend>Departments</legend>${departmentOptions}</fieldset>
+        <label>Attachment URL<input name="attachment_url" type="url" maxlength="2000"></label>
+        <label><input type="checkbox" name="pinned"> Pin announcement</label>
+        <div class="drawer-actions"><button type="submit" class="primary-action">Publish</button><button type="button" class="ghost" id="announcement-cancel">Cancel</button></div>
+      </form>`);
+    const form = $("#announcement-form");
+    $("#announcement-cancel")?.addEventListener("click", () => form.remove());
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const audience = fd.get("audience");
+      const department_ids = [...form.querySelectorAll('[name="department_ids"]:checked')].map((input) => input.value);
+      try {
+        await api("/api/announcements", json("POST", {
+          title: fd.get("title"),
+          content: fd.get("content"),
+          importance: fd.get("importance"),
+          audience,
+          department_ids,
+          user_ids: [],
+          attachment_url: fd.get("attachment_url"),
+          pinned: fd.has("pinned"),
+        }));
+        toast("Announcement published");
+        await renderAnnouncements();
+        refreshNotifications();
+      } catch (error) { toast(error.message); }
     });
   }
 

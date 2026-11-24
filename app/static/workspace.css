@@ -277,6 +277,42 @@ body.drawer-open { overflow: hidden; }
   background: #f8faff;
 }
 .ws-board { gap: 16px; }
+.announcement-card {
+  border: 1px solid #d8e2ef;
+  border-radius: 14px;
+  background: #fff;
+  padding: 18px;
+  box-shadow: 0 8px 24px rgba(41, 63, 97, .06);
+}
+.announcement-card.pinned {
+  border-left: 4px solid #3156d8;
+  background: linear-gradient(135deg, #fff, #f7f9ff);
+}
+.announcement-card h3 { margin: 8px 0 6px; }
+.announcement-card p { white-space: pre-wrap; color: #445775; }
+.announcement-meta, .announcement-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #64748b;
+  font-size: .82rem;
+  margin-top: 10px;
+}
+.announcement-form {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #d8e2ef;
+  border-radius: 14px;
+  background: #f8faff;
+  padding: 16px;
+}
+.announcement-form label { display: grid; gap: 6px; }
+.announcement-form input, .announcement-form textarea, .announcement-form select {
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
 .ws-col {
   border-radius: 14px;
   padding: 12px;

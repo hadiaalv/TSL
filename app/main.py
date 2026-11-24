@@ -327,6 +327,19 @@ class TaskCommentIn(BaseModel):
     content: str = Field(min_length=1, max_length=2000)
 
 
+class AnnouncementIn(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    content: str = Field(default="", max_length=20000)
+    importance: str = Field(default="normal", pattern=r"^(normal|important|critical)$")
+    audience: str = Field(default="all", pattern=r"^(all|departments|users)$")
+    department_ids: list[str] = Field(default_factory=list)
+    user_ids: list[str] = Field(default_factory=list)
+    attachment_url: str = Field(default="", max_length=2000)
+    publish_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    pinned: bool = False
+
+
 class NotificationSoundIn(BaseModel):
     enabled: bool
 
@@ -1353,6 +1366,20 @@ def acknowledge_task(request: Request, task_id: str) -> dict[str, Any]:
     acknowledged = db.acknowledge_task(task_id, str(user["id"]))
     if not acknowledged:
         raise HTTPException(409, "Task is no longer assigned to you")
+    if task.get("department_id"):
+        department = db.get_department(task["department_id"])
+        lead_id = department.get("lead_user_id") if department else None
+        if lead_id:
+            db.notify_user(
+                lead_id,
+                "acknowledgement",
+                f"Task acknowledged: {task['title']}",
+                f"{user.get('display_name') or user['username']} acknowledged the task.",
+                str(user["id"]),
+                source_id=f"{task_id}:ack:{user['id']}",
+                task_id=task_id,
+                target_url=f"/?task={task_id}",
+            )
     return acknowledged
 
 
@@ -1541,6 +1568,19 @@ def patch_task(
         raise HTTPException(404, "Task not found")
 
     actor_id = str(actor["id"])
+    if previous.get("priority") != updated.get("priority"):
+        labels = {"P0": "Critical", "P1": "High", "P2": "Medium", "P3": "Low"}
+        for assignee_id in updated.get("assignee_ids", []):
+            db.notify_user(
+                assignee_id,
+                "priority",
+                f"Priority changed: {updated['title']}",
+                f"New priority: {labels.get(updated.get('priority'), updated.get('priority'))}",
+                actor_id,
+                source_id=f"{task_id}:priority:{updated.get('priority')}",
+                task_id=task_id,
+                target_url=f"/?task={task_id}",
+            )
     if approver_user_id is not None:
         pending = db.get_pending_task_approval(task_id)
         if pending:
@@ -2048,6 +2088,42 @@ def add_task_comment(
     return comment
 
 
+@app.get("/api/announcements")
+def announcements(request: Request) -> list[dict[str, Any]]:
+    user = auth.require_user(request)
+    return db.list_announcements(user)
+
+
+@app.post("/api/announcements")
+def create_announcement(request: Request, body: AnnouncementIn) -> dict[str, Any]:
+    actor = auth.require_super_admin(request)
+    if body.audience == "departments" and not body.department_ids:
+        raise HTTPException(422, "Select at least one department")
+    if body.audience == "users" and not body.user_ids:
+        raise HTTPException(422, "Select at least one employee")
+    return db.create_announcement(
+        title=body.title.strip(),
+        content=body.content.strip(),
+        importance=body.importance,
+        audience=body.audience,
+        department_ids=body.department_ids,
+        user_ids=body.user_ids,
+        attachment_url=body.attachment_url.strip(),
+        publish_at=body.publish_at,
+        expires_at=body.expires_at,
+        pinned=body.pinned,
+        created_by=str(actor["id"]),
+    )
+
+
+@app.post("/api/announcements/{announcement_id}/read")
+def read_announcement(request: Request, announcement_id: str) -> dict[str, bool]:
+    user = auth.require_user(request)
+    if not db.acknowledge_announcement(announcement_id, str(user["id"])):
+        raise HTTPException(404, "Announcement not found")
+    return {"ok": True}
+
+
 @app.get("/api/notifications")
 def notifications(request: Request, filter: str = "all", limit: int = 50) -> dict[str, Any]:
     user = auth.require_user(request)
@@ -2485,7 +2561,22 @@ def google_status(
     status = _google().connection_status(user["id"])
     from app.integrations.google_drive import verify_drive_access
 
-    return {**status, **verify_drive_access(str(user["id"]))}
+    return {
+        **status,
+        **verify_drive_access(str(user["id"])),
+        "redirect_uri": _google_request_redirect_uri(request),
+    }
+
+
+def _google_request_redirect_uri(request: Request) -> str:
+    """Use the public origin from which OAuth was started, with proxy headers respected."""
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    host = forwarded_host or request.headers.get("host") or ""
+    scheme = forwarded_proto or request.url.scheme
+    if host:
+        return f"{scheme}://{host.rstrip('/')}/api/google/callback"
+    return settings.effective_google_redirect_uri
 
 
 @app.get("/api/google/auth")
@@ -2497,7 +2588,8 @@ def google_auth(
     try:
         return RedirectResponse(
             _google().auth_url(
-                user_id=str(user["id"])
+                user_id=str(user["id"]),
+                redirect_uri=_google_request_redirect_uri(request),
             )
         )
     except RuntimeError as e:
