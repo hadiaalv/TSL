@@ -1616,9 +1616,24 @@ async function refreshSession() {
     const profilePreview = $("#profile-photo-preview");
     const profileInitials = $("#profile-photo-initials");
     if (profilePreview) {
+      profilePreview.onerror = () => {
+        profilePreview.classList.add("hidden");
+        profileInitials?.classList.remove("hidden");
+        const status = $("#profile-photo-status");
+        if (status) {
+          status.textContent = "Saved profile photo could not be loaded.";
+          status.dataset.state = "error";
+        }
+      };
       if (profileImageUrl) profilePreview.src = profileImageUrl;
       else profilePreview.removeAttribute("src");
       profilePreview.classList.toggle("hidden", !profileImageUrl);
+    }
+    if (avatarImage) {
+      avatarImage.onerror = () => {
+        avatarImage.classList.add("hidden");
+        avatar?.classList.remove("hidden");
+      };
     }
     profileInitials?.classList.toggle("hidden", Boolean(profileImageUrl));
     $("#profile-photo-remove")?.classList.toggle("hidden", !profileImageUrl);
@@ -1687,25 +1702,30 @@ function attachGlobalHandlers() {
     const status = $("#profile-photo-status");
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
       status.textContent = "Choose a PNG, JPEG, or WebP image.";
+      status.dataset.state = "error";
       input.value = "";
       return;
     }
     if (file.size > MAX_LOGO_SIZE) {
       status.textContent = "Profile photos must be 4 MB or smaller.";
+      status.dataset.state = "error";
       input.value = "";
       return;
     }
     const button = $("#profile-photo-choose");
     button.disabled = true;
     status.textContent = "Uploading photo…";
+    status.dataset.state = "";
     try {
       const body = new FormData();
       body.append("file", file);
       await api("/api/auth/profile/photo", { method: "POST", body });
       await refreshSession();
       status.textContent = "Profile photo updated.";
+      status.dataset.state = "";
     } catch (error) {
       status.textContent = `Could not upload photo: ${error.message}`;
+      status.dataset.state = "error";
     } finally {
       input.value = "";
       button.disabled = false;
@@ -1715,12 +1735,15 @@ function attachGlobalHandlers() {
     const button = event.currentTarget;
     const status = $("#profile-photo-status");
     button.disabled = true;
+    status.dataset.state = "";
     try {
       await api("/api/auth/profile/photo", { method: "DELETE" });
       await refreshSession();
       status.textContent = "Profile photo removed.";
+      status.dataset.state = "";
     } catch (error) {
       status.textContent = `Could not remove photo: ${error.message}`;
+      status.dataset.state = "error";
     } finally {
       button.disabled = false;
     }

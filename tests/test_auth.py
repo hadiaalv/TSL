@@ -75,6 +75,15 @@ class SessionAuthTests(unittest.TestCase):
         photo_url = uploaded.json()["user"]["profile_photo_url"]
         photo_path = Path(settings.data_dir) / "profile_photos" / Path(photo_url).name
         self.assertTrue(photo_path.is_file())
+        self.assertTrue(photo_url.startswith("/api/auth/profile/photo/"))
+        photo_response = self.client.get(photo_url)
+        self.assertEqual(photo_response.status_code, 200)
+        self.assertEqual(photo_response.content, b"\x89PNG\r\n\x1a\nphoto")
+
+        legacy_url = f"/uploads/profiles/{Path(photo_url).name}"
+        db.update_user(str(self.user["id"]), profile_photo_url=legacy_url)
+        legacy_profile = self.client.get("/api/auth/me").json()["user"]
+        self.assertEqual(legacy_profile["profile_photo_url"], photo_url)
 
         removed = self.client.delete("/api/auth/profile/photo")
 

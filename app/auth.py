@@ -151,13 +151,19 @@ async def auth_middleware(request: Request, call_next):
 
 def public_user(user: dict[str, Any]) -> dict[str, Any]:
     role = user.get("role") or "operator"
+    profile_photo_url = user.get("profile_photo_url") or ""
+    legacy_photo_prefix = "/uploads/profiles/"
+    if profile_photo_url.startswith(legacy_photo_prefix):
+        filename = profile_photo_url.removeprefix(legacy_photo_prefix)
+        if filename and "/" not in filename:
+            profile_photo_url = f"/api/auth/profile/photo/{filename}"
     return {
         "id": user["id"],
         "username": user["username"],
         "display_name": user.get("display_name") or user["username"],
         "preferred_name": user.get("preferred_name") or "",
         "designation": user.get("designation") or "",
-        "profile_photo_url": user.get("profile_photo_url") or "",
+        "profile_photo_url": profile_photo_url,
         "role": role,
         "can_manage_users": role == "super_admin",
         "can_manage_tasks": role in ("admin", "super_admin"),

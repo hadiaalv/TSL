@@ -596,6 +596,7 @@ a.kpi:hover { transform: translateY(-2px); }
 }
 .profile-photo-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .profile-photo-status { color: #087a59; }
+.profile-photo-status[data-state="error"] { color: var(--danger); }
 
 @media (max-width: 1100px) {
   .main { padding-inline: 20px; }

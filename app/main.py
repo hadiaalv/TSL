@@ -482,6 +482,17 @@ def update_my_profile(request: Request, body: ProfilePatch) -> dict[str, Any]:
     return {"user": auth.public_user(updated)}
 
 
+@app.get("/api/auth/profile/photo/{filename}")
+def get_profile_photo(request: Request, filename: str) -> FileResponse:
+    auth.require_user(request)
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.(?:png|jpg|webp)", filename):
+        raise HTTPException(404, "Profile photo not found.")
+    photo_path = Path(settings.data_dir) / "profile_photos" / filename
+    if not photo_path.is_file():
+        raise HTTPException(404, "Profile photo not found.")
+    return FileResponse(photo_path)
+
+
 @app.post("/api/auth/profile/photo")
 async def upload_profile_photo(
     request: Request,
@@ -502,7 +513,7 @@ async def upload_profile_photo(
     (uploads / filename).write_bytes(safe_data)
     updated = db.update_user(
         str(user["id"]),
-        profile_photo_url=f"/uploads/profiles/{filename}",
+        profile_photo_url=f"/api/auth/profile/photo/{filename}",
     )
     if not updated:
         (uploads / filename).unlink(missing_ok=True)
@@ -923,10 +934,14 @@ def _remove_stored_brand_logo(logo_url: Optional[str]) -> None:
 
 
 def _remove_stored_profile_photo(photo_url: Optional[str]) -> None:
-    if not photo_url or not photo_url.startswith("/uploads/profiles/"):
+    if not photo_url:
         return
-    filename = Path(photo_url).name
-    if filename != photo_url.removeprefix("/uploads/profiles/"):
+    prefixes = ("/uploads/profiles/", "/api/auth/profile/photo/")
+    prefix = next((value for value in prefixes if photo_url.startswith(value)), None)
+    if not prefix:
+        return
+    filename = photo_url.removeprefix(prefix)
+    if not filename or Path(filename).name != filename:
         return
     stored = Path(settings.data_dir) / "profile_photos" / filename
     if stored.is_file():
