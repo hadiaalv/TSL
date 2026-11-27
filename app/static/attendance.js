@@ -123,25 +123,46 @@
     if (!canViewTeam() || !state.overview) return "";
     const counts = state.overview.counts;
     const stateText = { checked_in: "Checked In", checked_out: "Checked Out", not_checked_in: "Not checked in" };
-    const task = (t) => `<li><strong>${esc(t.title)}</strong> <span class="attendance-flag">${esc(t.status)}${t.running ? " · running" : ""}</span> <span class="muted">${esc(hoursText(t.tracked_seconds))} recorded</span>${t.description ? `<br /><span class="muted">${esc(String(t.description).slice(0, 200))}</span>` : ""}</li>`;
-    const departments = state.overview.departments.map((dept) => `<section class="attendance-employee">
-      <div class="attendance-employee-heading"><div><h3>${esc(dept.name)}</h3><span class="muted">${dept.members.length} employees</span></div></div>
+    const taskStatus = { open: "To do", in_progress: "In progress", waiting_on: "Review", blocked: "Blocked", delegated: "Delegated", paused: "Paused", done: "Completed", cancelled: "Cancelled" };
+    const activeTask = (task) => !["done", "cancelled"].includes(task.status);
+    const task = (item) => `<li class="team-task-row">
+      <span class="team-task-title">${esc(item.title)}</span>
+      <span class="attendance-flag task-state-${esc(item.status)}">${esc(taskStatus[item.status] || item.status)}${item.running ? " · timer running" : ""}</span>
+      <span class="team-task-time">${esc(hoursText(item.tracked_seconds))} tracked</span>
+      ${item.deadline ? `<time class="muted">Due ${esc(dateLabel(String(item.deadline).slice(0, 10)))}</time>` : ""}
+      ${item.description ? `<span class="muted team-task-description">${esc(String(item.description).slice(0, 200))}</span>` : ""}
+    </li>`;
+    const departments = state.overview.departments.map((dept) => {
+      const tasks = dept.members.flatMap((member) => member.tasks || []);
+      const activeAssignments = tasks.filter(activeTask).length;
+      const inProgressAssignments = tasks.filter((item) => item.status === "in_progress").length;
+      const reviewAssignments = tasks.filter((item) => ["waiting_on", "blocked"].includes(item.status)).length;
+      const completedAssignments = tasks.filter((item) => item.status === "done").length;
+      return `<section class="attendance-employee team-department-card">
+      <div class="attendance-employee-heading"><div><h3>${esc(dept.name)}</h3><span class="muted">${dept.members.length} team members</span></div></div>
+      <div class="team-progress-summary" aria-label="Department assignment summary">
+        <div><strong>${activeAssignments}</strong><span>Open assignments</span></div>
+        <div><strong>${inProgressAssignments}</strong><span>In progress</span></div>
+        <div><strong>${reviewAssignments}</strong><span>Review or blocked</span></div>
+        <div><strong>${completedAssignments}</strong><span>Completed</span></div>
+      </div>
       <div class="table-wrap"><table class="ws-table attendance-table">
-        <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Check-in</th><th>Check-out</th><th>Total today</th><th>Elapsed (active)</th><th>Task time today</th></tr></thead>
+        <thead><tr><th>Team member</th><th>Attendance</th><th>Check-in</th><th>Check-out</th><th>Today</th><th>Active session</th><th>Task time today</th><th>Assigned work</th></tr></thead>
         <tbody>${dept.members.map((m) => `<tr>
           <td>${esc(m.name)}${dept.lead_user_id === m.id ? ` <span class="attendance-flag">Lead</span>` : ""}</td>
-          <td>${esc(dept.name)}</td>
           <td><span class="attendance-state state-${esc(m.state.replace(/_/g, "-"))}">${esc(stateText[m.state])}</span></td>
           <td>${esc(dateTime(m.check_in_at))}</td>
           <td>${esc(dateTime(m.check_out_at))}</td>
           <td>${esc(hoursText(m.total_seconds))}</td>
           <td>${m.active_since ? `<span data-since="${esc(m.active_since)}">${esc(hoursText(elapsedSince(m.active_since)))}</span>` : "—"}</td>
           <td>${esc(hoursText(m.task_seconds_today))}</td>
-        </tr>${m.tasks.length ? `<tr><td colspan="8"><details><summary>Tasks and work history (${m.tasks.length})</summary><ul class="attendance-leave-list">${m.tasks.map(task).join("")}</ul></details></td></tr>` : ""}`).join("") || `<tr><td colspan="8">${emptyRow("No employees in this department.")}</td></tr>`}</tbody>
-      </table></div></section>`).join("");
+          <td>${m.tasks.length ? `<details class="team-task-details"><summary>${m.tasks.length} tasks · ${m.tasks.filter(activeTask).length} open</summary><ul class="team-task-list">${m.tasks.map(task).join("")}</ul></details>` : `<span class="muted">No assigned tasks</span>`}</td>
+        </tr>`).join("") || `<tr><td colspan="8">${emptyRow("No employees in this department.")}</td></tr>`}</tbody>
+      </table></div></section>`;
+    }).join("");
     return `<section class="attendance-report">
-      <div class="attendance-report-head"><div><h2>${isSuperAdmin() ? "All departments" : "Department overview"} · today</h2>
-        <p class="muted">${counts.checked_in} checked in · ${counts.checked_out} checked out · ${counts.not_checked_in} not checked in</p></div></div>
+      <div class="attendance-report-head"><div><span class="eyebrow">Team visibility</span><h2>${isSuperAdmin() ? "All departments" : "Department overview"} · today</h2>
+        <p class="muted">${counts.checked_in} checked in · ${counts.checked_out} checked out · ${counts.not_checked_in} not checked in. Expand a person’s assigned work to review task status, due dates, and tracked time.</p></div></div>
       ${departments || emptyRow("No departments to show.")}</section>`;
   }
 
@@ -310,8 +331,10 @@
     const target = root();
     if (!target) return;
     target.innerHTML = `<div class="ws-head attendance-head">
-      <div><span class="eyebrow">Separate from task time logs</span><h2>Office Attendance</h2>
-        <p class="muted">Check in when you arrive. Time keeps running until you explicitly check out, even if you close the browser or shut down.</p></div>
+      <div><span class="eyebrow">Separate from task time logs</span><h2>Office Timer</h2>
+        <p class="muted">${canViewTeam()
+          ? "Review attendance, assigned work, task progress, and tracked time for each team member."
+          : "Check in when you arrive. Time keeps running until you explicitly check out, even if you close the browser or shut down."}</p></div>
       ${policyMarkup()}
     </div>
     ${currentCard()}

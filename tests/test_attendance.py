@@ -388,6 +388,15 @@ class DepartmentLeadTests(unittest.TestCase):
             attendance.check_in(self.member["id"])
 
         self.login("lead-one")
+        business = db.create_business("Lead reporting")
+        task = db.create_task(
+            business["id"],
+            "Prepare weekly update",
+            department_id=self.dept["id"],
+            assignee_ids=[self.member["id"]],
+            actor_user_id=self.sa["id"],
+        )
+        db.update_task(task["id"], status="in_progress", actor_user_id=self.member["id"])
         me = self.client.get("/api/auth/me").json()["user"]
         self.assertEqual(me["led_department_ids"], [self.dept["id"]])
         overview = self.client.get("/api/attendance/overview")
@@ -397,6 +406,9 @@ class DepartmentLeadTests(unittest.TestCase):
         states = {m["id"]: m["state"] for m in body["departments"][0]["members"]}
         self.assertEqual(states[self.member["id"]], "checked_in")
         self.assertNotIn(self.outsider["id"], states)
+        member_work = next(m for m in body["departments"][0]["members"] if m["id"] == self.member["id"])
+        self.assertEqual([item["title"] for item in member_work["tasks"]], ["Prepare weekly update"])
+        self.assertTrue(member_work["tasks"][0]["running"])
 
         self.assertEqual(
             self.client.get("/api/attendance/overview", params={"department_id": self.other_dept["id"]}).status_code, 403
@@ -420,11 +432,19 @@ class DepartmentLeadTests(unittest.TestCase):
             ).status_code,
             403,
         )
-        window = {"start": "2026-10-01T00:00:00Z", "end": "2026-10-02T00:00:00Z"}
+        now = datetime.now(timezone.utc)
+        window = {
+            "start": (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "end": (now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
         self.assertEqual(
             self.client.get("/api/time/report", params={**window, "user_id": self.member["id"], "department_id": self.dept["id"]}).status_code,
             200,
         )
+        team_report = self.client.get(
+            "/api/time/report", params={**window, "user_id": "all", "department_id": self.dept["id"]}
+        )
+        self.assertEqual(team_report.status_code, 200, team_report.text)
         self.assertEqual(
             self.client.get("/api/time/report", params={**window, "user_id": self.outsider["id"], "department_id": self.dept["id"]}).status_code,
             403,
@@ -461,4 +481,3 @@ class DepartmentLeadTests(unittest.TestCase):
         self.login("lead-owner")
         body = self.client.get("/api/attendance/overview").json()
         self.assertGreaterEqual(len(body["departments"]), 2)
-

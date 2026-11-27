@@ -676,7 +676,7 @@
   async function renderNotifications() {
     const root = $("#notifications-root");
     if (!root) return;
-    const data = await api(`/api/notifications?filter=${state.notifFilter}&limit=100`);
+    const data = await api(`/api/notifications?filter=${state.notifFilter}&limit=200`);
     const tabs = ["all", "unread", "read"].map((k) => `<button type="button" class="ws-chip${state.notifFilter === k ? " active" : ""}" data-nf="${k}">${k[0].toUpperCase() + k.slice(1)}</button>`).join("");
     root.innerHTML = `
       <div class="ws-head"><div><span class="eyebrow">Inbox</span><h2>Notifications <span class="count-badge">${data.unread_count} unread</span></h2></div>
@@ -718,6 +718,7 @@
     const root = $("#announcements-root");
     if (!root) return;
     const items = await api("/api/announcements");
+    updateAnnouncementsBadge(items);
     const canPublish = state.isSA;
     root.innerHTML = `
       <div class="ws-head"><div><span class="eyebrow">Company news</span><h2>Announcements</h2></div>

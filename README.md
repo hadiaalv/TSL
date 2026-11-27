@@ -67,6 +67,7 @@ Tasks belong to departments (seeded: Content Writing & Planning, Graphic Designi
 - Assignees must be active members of the task's department. Any signed-in user can comment, but task notifications are sent only to newly assigned people.
 - Views: `#tasks/mine|all|unassigned|completed|overdue`, `#dept/<id>` Kanban boards, `#notifications`, `#reports`, `#deptmgmt`.
 - Time is always logged to the user who moved the task to In Progress, never the task creator.
+- Users can update their profile photo, preferred name, and designation from **Profile settings** in the account menu. While the workspace is open, notifications sync every 10 seconds and on reconnect or tab focus; unread items remain in the inbox. Optional desktop alerts require browser permission.
 
 Run tests: `.venv/bin/python -m unittest discover -s tests`
 

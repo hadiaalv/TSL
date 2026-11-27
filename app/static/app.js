@@ -11,16 +11,22 @@ let currentCanManage = false;
 let currentCanManageTasks = false;
 let currentUserRole = "";
 let currentDepartmentIds = [];
+let currentLedDepartmentIds = [];
+let timeLogDepartments = [];
+let timeLogMembers = [];
 let timelogSummaryText = "";
 let notificationSeen = null;
 let notificationSoundEnabled = false;
 let notificationAudioReady = false;
+let notificationRefreshPromise = null;
+let notificationPollTimer = null;
 let upcomingEventsCache = [];
 let brandWorkloadCache = [];
 
 const SIDEBAR_STATE_KEY = "tsl.sidebar.collapsed";
 const SIDEBAR_SECTION_KEY = "tsl.sidebar.sections";
 const MAX_LOGO_SIZE = 4 * 1024 * 1024;
+const NOTIFICATION_POLL_INTERVAL_MS = 10_000;
 
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
@@ -166,9 +172,9 @@ function initSidebarState() {
 }
 
 const PAGES = {
-  home: "Dashboard", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Attendance", calendar: "Calendar",
+  home: "Dashboard", brands: "Brands", work: "Open Work", timelog: "Time Logs", attendance: "Office Timer", calendar: "Calendar",
   ai: "AI Assistant", chat: "Team Chat", approvals: "Approvals", integrations: "Settings",
-  workspace: "Tasks", notifications: "Notifications", announcements: "Announcements", reports: "Reports", deptmgmt: "Department Management",
+  profile: "Profile Settings", workspace: "Tasks", notifications: "Notifications", announcements: "Announcements", reports: "Reports", deptmgmt: "Department Management",
 };
 
 function formatDuration(totalSeconds) {
@@ -219,7 +225,7 @@ function routeAllowedForRole(route) {
   if (route.view === "brand") {
     return businessesCache.some((business) => business.id === route.businessId);
   }
-  return ["home", "brands", "work", "timelog", "attendance", "notifications", "announcements"].includes(route.view);
+  return ["home", "brands", "work", "timelog", "attendance", "notifications", "announcements", "profile"].includes(route.view);
 }
 
 function setRoute(route, { replace = false } = {}) {
@@ -1369,23 +1375,39 @@ function playNotificationSound() {
 }
 
 async function refreshNotifications() {
-  const data = await api("/api/notifications");
+  if (notificationRefreshPromise) return notificationRefreshPromise;
+  notificationRefreshPromise = refreshNotificationCenter();
+  try {
+    return await notificationRefreshPromise;
+  } finally {
+    notificationRefreshPromise = null;
+  }
+}
+
+async function refreshNotificationCenter() {
+  const data = await api("/api/notifications?limit=200");
   const items = data.items || [];
   notificationSoundEnabled = !!data.sound_enabled;
+  updateDesktopNotificationControl();
+  setNotificationSyncStatus("success", `Live · checked ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
   const soundToggle = $("#notification-sound");
   if (soundToggle) soundToggle.checked = notificationSoundEnabled;
   const badge = $("#notification-badge");
+  const unreadCount = Number(data.unread_count || 0);
+  document.title = unreadCount
+    ? `(${unreadCount}) The Social Links · Workspace`
+    : "The Social Links · Workspace";
   if (badge) {
-    badge.textContent = String(data.unread_count || 0);
-    badge.classList.toggle("hidden", !data.unread_count);
+    badge.textContent = String(unreadCount);
+    badge.classList.toggle("hidden", !unreadCount);
   }
   const navBadge = $("#count-notifications");
   if (navBadge) {
-    navBadge.textContent = String(data.unread_count || 0);
-    navBadge.classList.toggle("hidden", !data.unread_count);
+    navBadge.textContent = String(unreadCount);
+    navBadge.classList.toggle("hidden", !unreadCount);
   }
   const list = $("#notification-list");
-  if (!list) return;
+  if (!list) return data;
   list.innerHTML = items.length
     ? items.map((item) => `<article class="notification-item ${item.read_at ? "" : "unread"}" data-id="${esc(item.id)}" data-url="${esc(item.target_url || "")}">
         <button type="button">
@@ -1420,10 +1442,94 @@ async function refreshNotifications() {
     });
   });
   const currentIds = new Set(items.map((item) => item.id));
-  if (notificationSeen && items.some((item) => !notificationSeen.has(item.id))) {
+  const newItems = notificationSeen
+    ? items.filter((item) => !notificationSeen.has(item.id) && !item.read_at)
+    : [];
+  if (newItems.length) {
     playNotificationSound();
+    newItems.forEach(showDesktopNotification);
   }
   notificationSeen = currentIds;
+  return data;
+}
+
+function setNotificationSyncStatus(state, message) {
+  const status = $("#notification-sync-status");
+  if (!status) return;
+  status.textContent = message;
+  status.dataset.state = state;
+}
+
+function updateDesktopNotificationControl() {
+  const button = $("#notification-desktop-enable");
+  if (!button) return;
+  if (!("Notification" in window)) {
+    button.textContent = "Desktop alerts unavailable";
+    button.disabled = true;
+    return;
+  }
+  button.disabled = Notification.permission === "denied";
+  button.textContent = Notification.permission === "granted"
+    ? "Desktop alerts enabled"
+    : Notification.permission === "denied"
+      ? "Desktop alerts blocked in browser"
+      : "Enable desktop alerts";
+}
+
+function showDesktopNotification(item) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible" && document.hasFocus()) return;
+  try {
+    const alert = new Notification(item.title, {
+      body: item.body || "You have a new workspace notification.",
+      icon: "/public/logo.png",
+      tag: `tsl-${item.id}`,
+    });
+    alert.addEventListener("click", () => {
+      window.focus();
+      const taskMatch = String(item.target_url || "").match(/[?&]task=([^&]+)/);
+      if (taskMatch) window.TSLWorkspace.openTask(decodeURIComponent(taskMatch[1]));
+      else if (String(item.target_url || "").endsWith("#chat")) setRoute("chat");
+      alert.close();
+    }, { once: true });
+  } catch (error) {
+    console.warn("Could not show desktop notification:", error);
+  }
+}
+
+function startNotificationPolling() {
+  if (notificationPollTimer) return;
+  const poll = () => {
+    refreshNotifications().catch((error) => {
+      setNotificationSyncStatus("error", "Connection interrupted · retrying automatically");
+      console.warn("Notification refresh failed:", error.message);
+    });
+    refreshAnnouncementsBadge().catch((error) => {
+      console.warn("Announcement badge refresh failed:", error.message);
+    });
+  };
+  notificationPollTimer = window.setInterval(poll, NOTIFICATION_POLL_INTERVAL_MS);
+  window.addEventListener("focus", poll);
+  window.addEventListener("online", poll);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") poll();
+  });
+  poll();
+}
+
+function updateAnnouncementsBadge(announcements) {
+  const unreadCount = currentUserRole === "super_admin"
+    ? 0
+    : announcements.filter((item) => !item.read_at && !item.acknowledged_at).length;
+  const badge = $("#count-announcements");
+  if (!badge) return;
+  badge.textContent = String(unreadCount);
+  badge.classList.toggle("hidden", unreadCount === 0);
+  badge.setAttribute("aria-label", `${unreadCount} unread announcements`);
+}
+
+async function refreshAnnouncementsBadge() {
+  updateAnnouncementsBadge(await api("/api/announcements"));
 }
 
 async function refreshAll() {
@@ -1434,6 +1540,7 @@ async function refreshAll() {
     refreshEvents(),
     refreshActivity(),
     refreshNotifications(),
+    refreshAnnouncementsBadge(),
   ];
   if (currentCanManage) jobs.push(refreshGoogle());
   if (currentCanManageTasks) jobs.push(refreshApprovals());
@@ -1470,20 +1577,52 @@ async function refreshSession() {
     currentCanManageTasks = Boolean(me.user?.can_manage_tasks);
     currentUserRole = me.user?.role || "operator";
     currentDepartmentIds = me.user?.department_ids || [];
+    currentLedDepartmentIds = me.user?.led_department_ids || [];
     $$(".sa-only").forEach((el) => el.classList.toggle("hidden", !currentCanManage));
     $$(".admin-only").forEach((el) => el.classList.toggle("hidden", !currentCanManageTasks));
     document.body.classList.toggle("is-operator", currentUserRole === "operator");
     document.body.classList.toggle("not-sa", !currentCanManage);
     document.body.classList.toggle("not-admin", !currentCanManageTasks);
-    const label = me.user?.display_name || me.user?.username || "";
+    const user = me.user || {};
+    const label = user.preferred_name || user.display_name || user.username || "";
     const roleName = { super_admin: "Super Admin", admin: "Admin", operator: "Operator" }[currentUserRole];
     const role = roleName ? ` · ${roleName}` : "";
     const el = $("#session-user");
     if (el) el.textContent = label + role;
+    const initials = (label.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "?").toUpperCase();
     const avatar = $("#profile-avatar");
+    const avatarImage = $("#profile-avatar-image");
+    const profileImageUrl = user.profile_photo_url || "";
     if (avatar) {
-      avatar.textContent = (label.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("") || "?").toUpperCase();
+      avatar.textContent = initials;
+      avatar.classList.toggle("hidden", Boolean(profileImageUrl));
     }
+    if (avatarImage) {
+      if (profileImageUrl) avatarImage.src = profileImageUrl;
+      else avatarImage.removeAttribute("src");
+      avatarImage.classList.toggle("hidden", !profileImageUrl);
+    }
+    const profileName = $("#profile-name");
+    if (profileName) profileName.textContent = label;
+    const profileDesignation = $("#profile-designation");
+    if (profileDesignation) profileDesignation.textContent = user.designation || "";
+    $("#profile-toggle")?.setAttribute("aria-label", `Account menu for ${label}`);
+    const nameInput = $("#profile-display-name-input");
+    if (nameInput) nameInput.value = user.display_name || user.username || "";
+    const preferredNameInput = $("#profile-preferred-name-input");
+    if (preferredNameInput) preferredNameInput.value = user.preferred_name || "";
+    const designationInput = $("#profile-designation-input");
+    if (designationInput) designationInput.value = user.designation || "";
+    const profilePreview = $("#profile-photo-preview");
+    const profileInitials = $("#profile-photo-initials");
+    if (profilePreview) {
+      if (profileImageUrl) profilePreview.src = profileImageUrl;
+      else profilePreview.removeAttribute("src");
+      profilePreview.classList.toggle("hidden", !profileImageUrl);
+    }
+    profileInitials?.classList.toggle("hidden", Boolean(profileImageUrl));
+    $("#profile-photo-remove")?.classList.toggle("hidden", !profileImageUrl);
+    if (profileInitials) profileInitials.textContent = initials;
     const welcome = $("#home-welcome");
     if (welcome) welcome.textContent = label ? `Welcome back, ${label}. Here’s your portfolio at a glance.` : "Your portfolio at a glance";
     window.TSLWorkspace?.onSession(me.user);
@@ -1504,6 +1643,10 @@ function attachGlobalHandlers() {
     event.stopPropagation();
     setProfileMenu(profileMenu?.classList.contains("hidden"));
   });
+  $("#profile-settings-open")?.addEventListener("click", () => {
+    setProfileMenu(false);
+    setRoute("profile");
+  });
   document.addEventListener("click", (event) => {
     if (!event.target.closest?.(".profile-wrap")) setProfileMenu(false);
   });
@@ -1511,6 +1654,77 @@ function attachGlobalHandlers() {
     if (event.key === "Escape") setProfileMenu(false);
   });
   $("#brand-search")?.addEventListener("input", renderBrandSurface);
+
+  $("#profile-form")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submit = form.querySelector('button[type="submit"]');
+    const status = $("#profile-save-status");
+    submit.disabled = true;
+    status.textContent = "";
+    try {
+      await api("/api/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          display_name: $("#profile-display-name-input").value,
+          preferred_name: $("#profile-preferred-name-input").value,
+          designation: $("#profile-designation-input").value,
+        }),
+      });
+      await refreshSession();
+      status.textContent = "Profile updated.";
+    } catch (error) {
+      status.textContent = `Could not save your profile: ${error.message}`;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  $("#profile-photo-choose")?.addEventListener("click", () => $("#profile-photo-file")?.click());
+  $("#profile-photo-file")?.addEventListener("change", async (event) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    const status = $("#profile-photo-status");
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      status.textContent = "Choose a PNG, JPEG, or WebP image.";
+      input.value = "";
+      return;
+    }
+    if (file.size > MAX_LOGO_SIZE) {
+      status.textContent = "Profile photos must be 4 MB or smaller.";
+      input.value = "";
+      return;
+    }
+    const button = $("#profile-photo-choose");
+    button.disabled = true;
+    status.textContent = "Uploading photo…";
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      await api("/api/auth/profile/photo", { method: "POST", body });
+      await refreshSession();
+      status.textContent = "Profile photo updated.";
+    } catch (error) {
+      status.textContent = `Could not upload photo: ${error.message}`;
+    } finally {
+      input.value = "";
+      button.disabled = false;
+    }
+  });
+  $("#profile-photo-remove")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const status = $("#profile-photo-status");
+    button.disabled = true;
+    try {
+      await api("/api/auth/profile/photo", { method: "DELETE" });
+      await refreshSession();
+      status.textContent = "Profile photo removed.";
+    } catch (error) {
+      status.textContent = `Could not remove photo: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
 
   $("#composer")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -2376,25 +2590,98 @@ function formatClock(value) {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+async function refreshTimeLog() {
+  const errorEl = $("#timelog-error");
+  if (errorEl) {
+    errorEl.hidden = true;
+    errorEl.textContent = "";
+  }
+  try {
+    await loadTimeLog();
+  } catch (error) {
+    if (errorEl) {
+      errorEl.textContent = `Could not load time log: ${error.message}`;
+      errorEl.hidden = false;
+    }
+    $("#timelog-summary").innerHTML = "";
+    $("#timelog-tasks").innerHTML = `<p class="empty-state">Time log data is unavailable.</p>`;
+    $("#timelog-entries").innerHTML = "";
+    setStatus(error.message);
+  }
+}
+
 async function loadTimeLog() {
   const dateInput = $("#timelog-date");
+  const departmentSelect = $("#timelog-department");
   const userSelect = $("#timelog-user");
   if (!dateInput || !userSelect) return;
   if (!dateInput.value) dateInput.value = localDateValue();
-  if (!userSelect.options.length) {
+  const canSeeTeam = currentUserRole === "super_admin"
+    || currentLedDepartmentIds.length > 0
+    || (currentUserRole === "admin" && currentDepartmentIds.length > 0);
+  const departmentLabel = $("#timelog-department-label");
+  if (departmentLabel) departmentLabel.classList.toggle("hidden", !canSeeTeam);
+
+  if (canSeeTeam && !timeLogDepartments.length) {
+    const departments = await api("/api/departments");
+    const allowed = currentUserRole === "super_admin"
+      ? departments
+      : departments.filter((department) => (currentLedDepartmentIds.length
+        ? currentLedDepartmentIds
+        : currentDepartmentIds).includes(department.id));
+    timeLogDepartments = allowed;
+    if (departmentSelect) {
+      const current = departmentSelect.value;
+      departmentSelect.innerHTML = currentUserRole === "super_admin"
+        ? `<option value="all">All departments</option>${allowed.map((department) => `<option value="${esc(department.id)}">${esc(department.name)}</option>`).join("")}`
+        : allowed.map((department) => `<option value="${esc(department.id)}">${esc(department.name)}</option>`).join("");
+      departmentSelect.value = allowed.some((department) => department.id === current)
+        ? current
+        : (currentUserRole === "super_admin" ? "all" : allowed[0]?.id || "");
+    }
+  }
+  const departmentId = departmentSelect?.value || "";
+  const selectedDepartment = timeLogDepartments.find((department) => department.id === departmentId);
+  if (canSeeTeam && departmentId && departmentId !== "all") {
+    const members = await api(`/api/departments/${encodeURIComponent(departmentId)}/members`);
+    timeLogMembers = members.filter((member) => member.status === "active");
+  } else if (currentUserRole === "super_admin") {
     if (!teamMembers.length) teamMembers = await api("/api/team/members");
-    const people = currentCanManage ? teamMembers : teamMembers.filter((m) => m.id === currentUserId);
-    userSelect.innerHTML = (currentCanManage ? `<option value="all">Everyone</option>` : "") + people
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.display_name)}${m.id === currentUserId ? " (me)" : ""}</option>`)
+    timeLogMembers = teamMembers;
+  } else {
+    timeLogMembers = [];
+  }
+  const previousUser = userSelect.value;
+  if (canSeeTeam) {
+    const audience = currentUserRole === "super_admin" && departmentId === "all"
+      ? "Everyone"
+      : `Everyone in ${selectedDepartment?.name || "department"}`;
+    userSelect.innerHTML = `<option value="all">${esc(audience)}</option>${timeLogMembers
+      .map((member) => `<option value="${esc(member.id)}">${esc(member.display_name)}${member.id === currentUserId ? " (me)" : ""}</option>`)
+      .join("")}`;
+    userSelect.disabled = false;
+    userSelect.value = Array.from(userSelect.options).some((option) => option.value === previousUser)
+      ? previousUser
+      : "all";
+  } else {
+    if (!teamMembers.length) teamMembers = await api("/api/team/members");
+    userSelect.innerHTML = teamMembers.filter((member) => member.id === currentUserId)
+      .map((member) => `<option value="${esc(member.id)}">${esc(member.display_name)} (me)</option>`)
       .join("");
     userSelect.value = currentUserId;
-    userSelect.disabled = !currentCanManage;
+    userSelect.disabled = true;
   }
   const [y, m, d] = dateInput.value.split("-").map(Number);
   const dayStart = new Date(y, m - 1, d);
   const dayEnd = new Date(y, m - 1, d + 1);
+  const params = new URLSearchParams({
+    start: dayStart.toISOString(),
+    end: dayEnd.toISOString(),
+    user_id: userSelect.value || currentUserId,
+  });
+  if (departmentId && departmentId !== "all") params.set("department_id", departmentId);
   const report = await api(
-    `/api/time/report?start=${encodeURIComponent(dayStart.toISOString())}&end=${encodeURIComponent(dayEnd.toISOString())}&user_id=${encodeURIComponent(userSelect.value)}`
+    `/api/time/report?${params}`
   );
   renderTimeLog(report);
 }
@@ -2403,23 +2690,23 @@ function renderTimeLog(report) {
   const userName = $("#timelog-user")?.selectedOptions[0]?.textContent.replace(" (me)", "") || "me";
   const anyRunning = report.entries.some((e) => e.running);
   $("#timelog-summary").innerHTML = `
-    <div class="summary-item"><strong>${esc(formatDuration(report.worked_seconds))}</strong><span>Time worked${anyRunning ? " (timer running)" : ""}</span></div>
+    <div class="summary-item"><strong>${esc(formatDuration(report.worked_seconds))}</strong><span>Time worked${anyRunning ? " · timer running" : ""}</span></div>
     <div class="summary-item"><strong>${report.tasks.length}</strong><span>Tasks worked on</span></div>
     <div class="summary-item"><strong>${esc(formatDuration(report.total_seconds))}</strong><span>Total task time</span></div>`;
   $("#timelog-tasks").innerHTML = report.tasks.length
-    ? `<table class="timelog-table"><thead><tr><th>Task</th><th>Brand</th><th>Who</th><th>Status</th><th>Time</th><th>Sessions</th></tr></thead><tbody>${report.tasks
+    ? `<div class="table-wrap timelog-table-wrap"><table class="timelog-table"><thead><tr><th>Task</th><th>Brand</th><th>Who</th><th>Status</th><th>Time</th><th>Sessions</th></tr></thead><tbody>${report.tasks
         .map(
           (t) => `<tr><td>${esc(t.task_title)}${t.running ? ` <span class="task-timer running">running</span>` : ""}</td><td>${esc(t.business_name)}</td><td>${esc((t.people || []).join(", "))}</td><td>${esc(({ open: "To Do", in_progress: "In Progress", waiting_on: "Review", blocked: "Review", delegated: "In Progress", done: "Completed", cancelled: "Completed" })[t.task_status] || t.task_status)}</td><td><strong>${esc(formatDuration(t.seconds))}</strong></td><td>${t.sessions}</td></tr>`
         )
-        .join("")}</tbody></table>`
-    : `<p class="muted">No time tracked on this day. Move a card to In Progress to start a timer.</p>`;
+        .join("")}</tbody></table></div>`
+    : `<p class="empty-state">No time tracked on this day. Move a card to In Progress to start a timer.</p>`;
   $("#timelog-entries").innerHTML = report.entries.length
     ? report.entries
         .map(
           (e) => `<div class="timelog-entry"><span class="timelog-range">${esc(formatClock(e.started_at))} – ${e.running ? "now" : esc(formatClock(e.ended_at))}</span><span>${esc(e.task_title)} <span class="muted">· ${esc(e.business_name)} · ${esc(e.user_name)}</span></span><strong>${esc(formatDuration(e.seconds))}</strong></div>`
         )
         .join("")
-    : "";
+    : `<p class="empty-state">No work sessions for this person and date.</p>`;
   const date = $("#timelog-date").value;
   timelogSummaryText = [
     `Work update for ${userName} on ${date}`,
@@ -2435,7 +2722,7 @@ async function applyRoute() {
     setRoute("home", { replace: true });
   }
   applyRouteView(route);
-  if (route.view === "timelog") loadTimeLog().catch((error) => setStatus(error.message));
+  if (route.view === "timelog") refreshTimeLog();
   if (route.view === "attendance") window.TSLAttendance?.onRoute();
   if (route.view === "home") window.TSLDashboard?.onRoute();
   if (route.view === "chat") initSlackView();
@@ -2454,8 +2741,9 @@ async function initialize() {
   bindBrandLinks();
   bindBrandTabs();
   bindGlobalSearch();
-  $("#timelog-date")?.addEventListener("change", () => loadTimeLog().catch((error) => setStatus(error.message)));
-  $("#timelog-user")?.addEventListener("change", () => loadTimeLog().catch((error) => setStatus(error.message)));
+  $("#timelog-date")?.addEventListener("change", refreshTimeLog);
+  $("#timelog-user")?.addEventListener("change", refreshTimeLog);
+  $("#timelog-department")?.addEventListener("change", refreshTimeLog);
   $("#timelog-copy")?.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(timelogSummaryText);
@@ -2469,6 +2757,22 @@ async function initialize() {
   });
   window.addEventListener("pointerdown", unlockNotificationAudio);
   window.addEventListener("keydown", unlockNotificationAudio);
+  $("#notification-desktop-enable")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      if (!("Notification" in window)) throw new Error("Desktop notifications are not supported by this browser.");
+      const permission = await Notification.requestPermission();
+      updateDesktopNotificationControl();
+      if (permission !== "granted") setNotificationSyncStatus("error", "Allow desktop alerts in your browser settings to receive them.");
+      else setNotificationSyncStatus("success", "Desktop alerts enabled for new notifications.");
+    } catch (error) {
+      setNotificationSyncStatus("error", error.message);
+      console.warn("Could not enable desktop notifications:", error);
+    } finally {
+      updateDesktopNotificationControl();
+    }
+  });
   document.addEventListener("keydown", (event) => {
     if (event.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
       event.preventDefault();
@@ -2477,6 +2781,7 @@ async function initialize() {
   });
 
   await refreshSession();
+  startNotificationPolling();
   window.TSLAttendance?.start();
   await refreshAll();
   await applyRoute();
@@ -2503,11 +2808,6 @@ async function initialize() {
   }
 
   startSlackBackgroundPolling();
-  window.setInterval(() => {
-    refreshNotifications().catch((error) => {
-      console.warn("Notification refresh failed:", error.message);
-    });
-  }, 10_000);
 }
 
 initialize().catch((error) => {

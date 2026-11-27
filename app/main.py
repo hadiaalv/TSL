@@ -27,7 +27,10 @@ from app.config import settings
 STATIC = Path(__file__).parent / "static"
 BRAND_UPLOADS = Path(settings.data_dir) / "brand_logos"
 BRAND_UPLOADS.mkdir(parents=True, exist_ok=True)
+PROFILE_UPLOADS = Path(settings.data_dir) / "profile_photos"
+PROFILE_UPLOADS.mkdir(parents=True, exist_ok=True)
 MAX_BRAND_LOGO_BYTES = 4 * 1024 * 1024
+MAX_PROFILE_PHOTO_BYTES = 4 * 1024 * 1024
 
 
 class _WebhookTokenLogFilter(logging.Filter):
@@ -369,6 +372,12 @@ class AdminUserPatch(BaseModel):
     password: Optional[str] = None
 
 
+class ProfilePatch(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    preferred_name: Optional[str] = Field(default=None, max_length=80)
+    designation: Optional[str] = Field(default=None, max_length=120)
+
+
 # ── Auth ────────────────────────────────────────────────────
 
 
@@ -455,6 +464,61 @@ def api_me(
             "is_department_lead": bool(led),
         }
     }
+
+
+@app.patch("/api/auth/profile")
+def update_my_profile(request: Request, body: ProfilePatch) -> dict[str, Any]:
+    user = auth.require_user(request)
+    fields: dict[str, str] = {}
+    if body.display_name is not None:
+        fields["display_name"] = body.display_name.strip() or str(user["username"])
+    if body.preferred_name is not None:
+        fields["preferred_name"] = body.preferred_name.strip()
+    if body.designation is not None:
+        fields["designation"] = body.designation.strip()
+    updated = db.update_user(str(user["id"]), **fields)
+    if not updated:
+        raise HTTPException(404, "User not found")
+    return {"user": auth.public_user(updated)}
+
+
+@app.post("/api/auth/profile/photo")
+async def upload_profile_photo(
+    request: Request,
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    user = auth.require_user(request)
+    data = await file.read(MAX_PROFILE_PHOTO_BYTES + 1)
+    if not data:
+        raise HTTPException(400, "Choose an image to upload.")
+    if len(data) > MAX_PROFILE_PHOTO_BYTES:
+        raise HTTPException(413, "Profile photos must be 4 MB or smaller.")
+    safe_data, extension = _validated_logo(data, file.content_type or "")
+    if extension == "svg":
+        raise HTTPException(415, "Profile photos must be PNG, JPEG, or WebP images.")
+    filename = f"{user['id']}-{uuid.uuid4().hex}.{extension}"
+    uploads = Path(settings.data_dir) / "profile_photos"
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / filename).write_bytes(safe_data)
+    updated = db.update_user(
+        str(user["id"]),
+        profile_photo_url=f"/uploads/profiles/{filename}",
+    )
+    if not updated:
+        (uploads / filename).unlink(missing_ok=True)
+        raise HTTPException(404, "User not found")
+    _remove_stored_profile_photo(user.get("profile_photo_url"))
+    return {"user": auth.public_user(updated)}
+
+
+@app.delete("/api/auth/profile/photo")
+def remove_profile_photo(request: Request) -> dict[str, Any]:
+    user = auth.require_user(request)
+    updated = db.update_user(str(user["id"]), profile_photo_url="")
+    if not updated:
+        raise HTTPException(404, "User not found")
+    _remove_stored_profile_photo(user.get("profile_photo_url"))
+    return {"user": auth.public_user(updated)}
 
 
 # ── Admin (Phase 2) ─────────────────────────────────────────
@@ -854,6 +918,17 @@ def _remove_stored_brand_logo(logo_url: Optional[str]) -> None:
     if filename != logo_url.removeprefix("/uploads/brands/"):
         return
     stored = BRAND_UPLOADS / filename
+    if stored.is_file():
+        stored.unlink()
+
+
+def _remove_stored_profile_photo(photo_url: Optional[str]) -> None:
+    if not photo_url or not photo_url.startswith("/uploads/profiles/"):
+        return
+    filename = Path(photo_url).name
+    if filename != photo_url.removeprefix("/uploads/profiles/"):
+        return
+    stored = Path(settings.data_dir) / "profile_photos" / filename
     if stored.is_file():
         stored.unlink()
 
@@ -2999,6 +3074,11 @@ app.mount(
     "/uploads/brands",
     StaticFiles(directory=str(BRAND_UPLOADS)),
     name="brand-logos",
+)
+app.mount(
+    "/uploads/profiles",
+    StaticFiles(directory=str(PROFILE_UPLOADS)),
+    name="profile-photos",
 )
 
 

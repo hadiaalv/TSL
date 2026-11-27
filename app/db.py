@@ -294,6 +294,9 @@ def init_db() -> None:
                 username TEXT NOT NULL UNIQUE,
                 password_hash TEXT NOT NULL,
                 display_name TEXT DEFAULT '',
+                preferred_name TEXT DEFAULT '',
+                designation TEXT DEFAULT '',
+                profile_photo_url TEXT DEFAULT '',
                 role TEXT DEFAULT 'operator',
                 status TEXT DEFAULT 'active',
                 created_at TEXT NOT NULL,
@@ -775,6 +778,9 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'operator'")
         # Existing single-tenant installs become super_admins
         conn.execute("UPDATE users SET role = 'super_admin'")
+    for column in ("preferred_name", "designation", "profile_photo_url"):
+        if column not in user_cols:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT DEFAULT ''")
 
     business_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(businesses)").fetchall()
@@ -1035,7 +1041,10 @@ def create_user(
 
 
 def update_user(user_id: str, **fields: Any) -> Optional[dict[str, Any]]:
-    allowed = {"display_name", "role", "status", "password_hash"}
+    allowed = {
+        "display_name", "preferred_name", "designation", "profile_photo_url",
+        "role", "status", "password_hash",
+    }
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "role" in updates and updates["role"] not in USER_ROLES:
         raise ValueError("Invalid role")
@@ -3349,7 +3358,10 @@ def count_unread_notifications(user_id: str) -> int:
             """
             SELECT COUNT(*) AS total FROM notifications
             WHERE recipient_user_id = ?
-              AND notification_type IN ('assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack')
+              AND notification_type IN (
+                  'assignment', 'review', 'comment', 'mention', 'approval', 'admin', 'slack',
+                  'priority', 'acknowledgement', 'task_update', 'deadline', 'announcement'
+              )
               AND read_at IS NULL
             """,
             (user_id,),

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -39,6 +40,47 @@ class SessionAuthTests(unittest.TestCase):
         logout = self.client.post("/api/auth/logout", json={})
         self.assertEqual(logout.status_code, 200)
         self.assertEqual(self.client.get("/api/auth/me").status_code, 401)
+
+    def test_user_can_update_profile_and_upload_or_remove_photo(self):
+        self.client.post(
+            "/api/auth/login",
+            json={"username": "session-test-user", "password": "test-password"},
+        )
+
+        updated = self.client.patch(
+            "/api/auth/profile",
+            json={
+                "display_name": "Taylor Smith",
+                "preferred_name": "Tay",
+                "designation": "Product Designer",
+            },
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(
+            updated.json()["user"]["preferred_name"],
+            "Tay",
+        )
+        self.assertEqual(
+            self.client.get("/api/auth/me").json()["user"]["designation"],
+            "Product Designer",
+        )
+
+        uploaded = self.client.post(
+            "/api/auth/profile/photo",
+            files={"file": ("profile.png", b"\x89PNG\r\n\x1a\nphoto", "image/png")},
+        )
+
+        self.assertEqual(uploaded.status_code, 200)
+        photo_url = uploaded.json()["user"]["profile_photo_url"]
+        photo_path = Path(settings.data_dir) / "profile_photos" / Path(photo_url).name
+        self.assertTrue(photo_path.is_file())
+
+        removed = self.client.delete("/api/auth/profile/photo")
+
+        self.assertEqual(removed.status_code, 200)
+        self.assertEqual(removed.json()["user"]["profile_photo_url"], "")
+        self.assertFalse(photo_path.exists())
 
     def test_local_auth_bypass_allows_loopback_requests_without_a_session(self):
         old_bypass = settings.auth_bypass_local

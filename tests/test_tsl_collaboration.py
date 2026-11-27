@@ -69,6 +69,34 @@ class TSLTaskCollaborationTests(unittest.TestCase):
         self.assertEqual(notification["items"][0]["notification_type"], "mention")
         self.assertIn("mentioned you", notification["items"][0]["title"])
 
+    def test_unread_count_includes_every_supported_notification_type(self):
+        notification_types = (
+            "priority",
+            "acknowledgement",
+            "task_update",
+            "deadline",
+            "announcement",
+        )
+        for notification_type in notification_types:
+            self.assertTrue(
+                db.notify_user(
+                    self.recipient["id"],
+                    notification_type,
+                    f"{notification_type} update",
+                    "A workspace update needs your attention.",
+                    self.author["id"],
+                )
+            )
+
+        response = self.recipient_client.get("/api/notifications")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["unread_count"], len(notification_types))
+        self.assertEqual(
+            {item["notification_type"] for item in response.json()["items"]},
+            set(notification_types),
+        )
+
     def test_review_comments_and_mentions_notify_assignee(self):
         assigned = self.author_client.patch(
             f"/api/tasks/{self.task['id']}",
